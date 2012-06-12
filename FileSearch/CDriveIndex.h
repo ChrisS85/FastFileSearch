@@ -18,14 +18,23 @@ using namespace std;
 struct IndexedFile
 {
 	DWORDLONG Index;
-	DWORDLONG ParentIndex;
+	//DWORDLONG ParentIndex;
 	DWORDLONG Filter;
 	bool operator<(const IndexedFile& i)
 	{
 		return Index < i.Index;
 	}
 };
-
+struct USNEntry
+{
+	DWORDLONG ParentIndex;
+	wstring Name;
+	USNEntry(wstring aName, DWORDLONG aParentIndex)
+	{
+		Name = aName;
+		ParentIndex = aParentIndex;
+	}
+};
 
 class CDriveIndex {
 public:
@@ -45,7 +54,7 @@ protected:
 	long FindOffsetByIndex(DWORDLONG Index);
 	long FindDirOffsetByIndex(DWORDLONG Index);
 	DWORDLONG MakeAddress(wstring *szName);
-	wstring CDriveIndex::FRNToName(DWORDLONG FRN);
+	USNEntry FRNToName(DWORDLONG FRN);
 	void CleanUp();
 	BOOL Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
 	BOOL AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);

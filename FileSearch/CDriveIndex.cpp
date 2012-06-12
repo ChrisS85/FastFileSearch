@@ -165,7 +165,7 @@ BOOL CDriveIndex::Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, D
 {
 	IndexedFile i;
 	i.Index = Index;
-	i.ParentIndex = ParentIndex;
+	//i.ParentIndex = ParentIndex;
 	if(!Filter)
 		Filter = MakeAddress(szName);
 	i.Filter = Filter;
@@ -180,7 +180,7 @@ BOOL CDriveIndex::AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex
 {
 	IndexedFile i;
 	i.Index = Index;
-	i.ParentIndex = ParentIndex;
+	//i.ParentIndex = ParentIndex;
 	if(!Filter)
 		Filter = MakeAddress(szName);
 	i.Filter = Filter;
@@ -326,8 +326,8 @@ void CDriveIndex::Find(wstring *strQuery, vector<wstring> *rgszResults)
 		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 		{
 			/*FRNToName(i->Index, &szName);*/
-			wstring szName = FRNToName(i->Index);
-			wstring szLower(szName);
+			USNEntry file = FRNToName(i->Index);
+			wstring szLower(file.Name);
 			for(unsigned int j = 0; j != szLower.length(); j++)
 				szLower[j] = tolower(szLower[j]);
 			//transform(szLower.begin(), szLower.end(), szLower.begin(), tolower);
@@ -347,8 +347,8 @@ void CDriveIndex::Find(wstring *strQuery, vector<wstring> *rgszResults)
 		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 		{
 			//FRNToName(i->Index, &szName);
-			wstring szName = FRNToName(i->Index);
-			wstring szLower(szName);
+			USNEntry file = FRNToName(i->Index);
+			wstring szLower(file.Name);
 			for(unsigned int j = 0; j != szLower.length(); j++)
 				szLower[j] = tolower(szLower[j]);
 			//transform(szLower.begin(), szLower.end(), szLower.begin(), tolower);
@@ -392,8 +392,9 @@ BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
 			return FALSE;
 		/*FRNToName(Index, &strName);
 		*sz = strName + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;*/
-		*sz = FRNToName(Index) + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;
-		Index = (n == 0 ? rgFiles[Offset].ParentIndex : rgDirectories[Offset].ParentIndex);
+		USNEntry file = FRNToName(Index);
+		*sz = file.Name + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;
+		Index = file.ParentIndex;
 		n++;
 	} while (Index != 0);
 	return(TRUE);
@@ -414,8 +415,9 @@ BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz)
 			return FALSE;
 		//FRNToName(Index, &strName);
 		//*sz = strName + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
-		*sz = FRNToName(Index) + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
-		Index = rgDirectories[Offset].ParentIndex;
+		USNEntry file = FRNToName(Index);
+		*sz = file.Name + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
+		Index = file.ParentIndex;
 	} while (Index != 0);
 	return(TRUE);
 }
@@ -521,10 +523,10 @@ void CDriveIndex::PopulateIndex()
 
 
 // Resolve FRN to filename by enumerating USN journal with StartFileReferenceNumber=FRN
-wstring CDriveIndex::FRNToName(DWORDLONG FRN)
+USNEntry CDriveIndex::FRNToName(DWORDLONG FRN)
 {
 	if(FRN == m_dwDriveFRN)
-		return wstring(1, m_cDrive) + wstring(TEXT(":"));
+		return USNEntry(wstring(1, m_cDrive) + wstring(TEXT(":")), 0);
 	USN_JOURNAL_DATA ujd;
 	Query(&ujd);
 
@@ -541,12 +543,12 @@ wstring CDriveIndex::FRNToName(DWORDLONG FRN)
 		PUSN_RECORD pRecord = (PUSN_RECORD) &pData[sizeof(USN)];
 		while ((PBYTE) pRecord < (pData + cb)) {
 			if(pRecord->FileReferenceNumber == FRN)
-				return wstring((LPCWSTR) ((PBYTE) pRecord + pRecord->FileNameOffset), pRecord->FileNameLength / sizeof(WCHAR));
+				return USNEntry(wstring((LPCWSTR) ((PBYTE) pRecord + pRecord->FileNameOffset), pRecord->FileNameLength / sizeof(WCHAR)), pRecord->ParentFileReferenceNumber);
 			pRecord = (PUSN_RECORD) ((PBYTE) pRecord + pRecord->RecordLength);
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
-	return wstring(TEXT(""));
+	return USNEntry(wstring(TEXT("")), 0);
 }
 
 
