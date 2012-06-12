@@ -42,6 +42,21 @@ struct DriveInfo
 	DWORDLONG NumDirectories;
 };
 
+struct SearchResultFile
+{
+	wstring Path;
+	DWORDLONG Filter;
+	SearchResultFile(wstring aPath, DWORDLONG aFilter)
+	{
+		Path = aPath;
+		Filter = aFilter;
+	}
+};
+struct SearchResult
+{
+	wstring Query;
+	vector<SearchResultFile> Results;
+};
 class CDriveIndex {
 public:
 	CDriveIndex();
@@ -67,7 +82,7 @@ protected:
 	BOOL AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
 	BOOL Get(DWORDLONG Index, wstring *sz);
 	BOOL GetDir(DWORDLONG Index, wstring *sz);
-	
+	void ClearLastResult();
 	// Members used to enumerate journal records
 	HANDLE					m_hVol;			// handle to volume
 	WCHAR					m_cDrive;		// drive letter of volume
@@ -76,6 +91,8 @@ protected:
 	//Database containers
 	vector<IndexedFile> rgFiles;
 	vector<IndexedFile> rgDirectories;
+
+	SearchResult LastResult;
 };
 
 

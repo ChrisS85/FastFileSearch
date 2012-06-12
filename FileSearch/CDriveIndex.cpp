@@ -164,6 +164,7 @@ BOOL CDriveIndex::Init(WCHAR cDrive)
 	// You should not call this function twice for one instance.
 	if (m_hVol != INVALID_HANDLE_VALUE) DebugBreak();
 	m_cDrive = cDrive;
+	ClearLastResult();
 	BOOL fOk = FALSE;
 	__try {
 		// Open a handle to the volume
@@ -177,7 +178,10 @@ BOOL CDriveIndex::Init(WCHAR cDrive)
 	return(fOk);
 }
 
-
+void CDriveIndex::ClearLastResult()
+{
+	LastResult = SearchResult();
+}
 
 // Adds a file to the database
 BOOL CDriveIndex::Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Filter)
@@ -257,70 +261,70 @@ DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
 		c = szlower[i];
 		if(c > 96 && c < 123) //a-z
 		{
-			Address |= 1i64 << (DWORDLONG)((DWORDLONG)c - 97i64);
+			Address |= 1ui64 << (DWORDLONG)((DWORDLONG)c - 97ui64);
 			counts[c-97]++;
 			if(i < l - 1)
 			{
 				if(c == L't' && szlower[i+1] == L'h') //th
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'h' && szlower[i+1] == L'e') //he
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'a' && szlower[i+1] == L'n') //an
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'r' && szlower[i+1] == L'e') //re
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'e' && szlower[i+1] == L'r') //er
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'i' && szlower[i+1] == L'n') //in
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'o' && szlower[i+1] == L'n') //on
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'a' && szlower[i+1] == L't') //at
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'n' && szlower[i+1] == L'd') //nd
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L's' && szlower[i+1] == L't') //st
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'e' && szlower[i+1] == L's') //es
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'e' && szlower[i+1] == L'n') //en
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'o' && szlower[i+1] == L'f') //of
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L't' && szlower[i+1] == L'e') //te
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'e' && szlower[i+1] == L'd') //ed
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'o' && szlower[i+1] == L'r') //or
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L't' && szlower[i+1] == L'i') //ti
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'h' && szlower[i+1] == L'i') //hi
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L'a' && szlower[i+1] == L's') //as
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 				else if(c == L't' && szlower[i+1] == L'o') //to
-					Address |= 1i64 << 41;
+					Address |= 1ui64 << 41;
 			}
 		}
 		else if(c >= L'0' && c <= '9') //0-9
-			Address |= 1i64 << (c - L'0' + 26i64);
+			Address |= 1ui64 << (c - L'0' + 26ui64);
 		else if(c == L'.') //.
-			Address |= 1i64 << 36;
+			Address |= 1ui64 << 36;
 		else if(c == L' ') // space
-			Address |= 1i64 << 37;
+			Address |= 1ui64 << 37;
 		else if(c == L'!' || c == L'#' || c == L'$' || c == L'&' || c == L'\'' || c == L'(' || c == L')' || c == L'+' || c == L',' || c == L'-' || c == L'~' || c == L'_')
-			Address |= 1i64 << 38; // !#$&'()+,-~_
+			Address |= 1ui64 << 38; // !#$&'()+,-~_
 	}
 	for(unsigned int i = 0; i != 26; i++)
 	{
 		if(counts[i] == 2)
-			Address |= 1i64 << 39;
+			Address |= 1ui64 << 39;
 		else if(counts[i] > 2)
-			Address |= 1i64 << 40;
+			Address |= 1ui64 << 40;
 	}
-	DWORDLONG length = (szlower.length() > 7 ? 7 : szlower.length()) & 0x00000008; //3 bits for length -> 8 max
-	Address |= length << 61;
+	DWORDLONG length = (szlower.length() > 7 ? 7ui64 : (DWORDLONG)szlower.length()) & 0x00000007ui64; //3 bits for length -> 8 max
+	Address |= length << 61ui64;
 	return Address;
 }
 
@@ -331,47 +335,99 @@ DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
 // to skip the wrapper.
 void CDriveIndex::Find(wstring *strQuery, vector<wstring> *rgszResults)
 {
+	if(strQuery->length() == 0)
+	{
+		// Store this query
+		LastResult.Query = wstring(TEXT(""));
+		LastResult.Results = vector<SearchResultFile>();
+		return;
+	}
+	wstring strQueryLower(*strQuery);
+	for(unsigned int j = 0; j != strQueryLower.length(); j++)
+		strQueryLower[j] = tolower(strQueryLower[j]);
+	const WCHAR *szQuery = strQueryLower.c_str();
+	
+	
 	//finds all files that contain pszQuery in their names
-	DWORDLONG QueryFilter = MakeAddress(strQuery);
-	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000i64) >> 61i64; //Bits 61-63 for storing lengths up to 8
-	QueryFilter = QueryFilter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
-	const WCHAR *szQuery = strQuery->c_str();
-	for(IndexedFile *i = &rgFiles[0]; i != &rgFiles.back(); i++) {
-		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 61-63 for storing lengths up to 8
-		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
-		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+	DWORDLONG QueryFilter = MakeAddress(&strQueryLower);
+	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+	QueryFilter = QueryFilter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+
+	if(strQueryLower.compare(LastResult.Query))
+		for(SearchResultFile *srf = &LastResult.Results[0]; srf != &LastResult.Results.back(); srf++)
+			rgszResults->insert(rgszResults->end(), srf->Path);
+	else if(strQueryLower.find(LastResult.Query) != -1 && LastResult.Results.size() > 0)
+	{
+		vector<SearchResultFile> results;
+		for(SearchResultFile *srf = &LastResult.Results[0]; srf != &LastResult.Results.back(); srf++)
 		{
-			USNEntry file = FRNToName(i->Index);
-			wstring szLower(file.Name);
-			for(unsigned int j = 0; j != szLower.length(); j++)
-				szLower[j] = tolower(szLower[j]);
-			if(szLower.find(szQuery) != -1)
+			DWORDLONG Length = (srf->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+			DWORDLONG Filter = srf->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 			{
-				wstring szPath;
-				szPath.reserve(MAX_PATH);
-				Get(i->Index, &szPath);
-				rgszResults->insert(rgszResults->end(), szPath);
+				//split path
+				WCHAR szName[_MAX_FNAME];
+				WCHAR szExt[_MAX_EXT];
+				_wsplitpath(srf->Path.c_str(), NULL, NULL, szName, szExt);
+				wstring szLower(wstring(szName) + szExt);
+				for(unsigned int j = 0; j != szLower.length(); j++)
+					szLower[j] = tolower(szLower[j]);
+				if(szLower.find(szQuery) != -1)
+				{
+					rgszResults->insert(rgszResults->end(), srf->Path);
+					results.insert(results.end(), *srf);
+				}
+			}
+		}
+		LastResult.Results = results;
+	}
+	else
+	{
+		LastResult.Results = vector<SearchResultFile>();
+		for(IndexedFile *i = &rgFiles[0]; i != &rgFiles.back(); i++)
+		{
+			DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+			DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+			{
+				USNEntry file = FRNToName(i->Index);
+				wstring szLower(file.Name);
+				for(unsigned int j = 0; j != szLower.length(); j++)
+					szLower[j] = tolower(szLower[j]);
+				if(szLower.find(szQuery) != -1)
+				{
+					wstring szPath;
+					szPath.reserve(MAX_PATH);
+					Get(i->Index, &szPath);
+					rgszResults->insert(rgszResults->end(), szPath);
+					SearchResultFile srf = SearchResultFile(szPath, i->Filter);
+					LastResult.Results.insert(LastResult.Results.end(), srf);
+				}
+			}
+		}
+		for(IndexedFile *i = &rgDirectories[0]; i != &rgDirectories.back(); i++) {
+			DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+			DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+			{
+				USNEntry file = FRNToName(i->Index);
+				wstring szLower(file.Name);
+				for(unsigned int j = 0; j != szLower.length(); j++)
+					szLower[j] = tolower(szLower[j]);
+				if(szLower.find(szQuery) != -1)
+				{
+					wstring szPath;
+					szPath.reserve(MAX_PATH);
+					GetDir(i->Index, &szPath);
+					rgszResults->insert(rgszResults->end(), szPath);
+					SearchResultFile srf = SearchResultFile(szPath, i->Filter);
+					LastResult.Results.insert(LastResult.Results.end(), srf);
+				}
 			}
 		}
 	}
-	for(IndexedFile *i = &rgDirectories[0]; i != &rgDirectories.back(); i++) {
-		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 61-63 for storing lengths up to 8
-		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
-		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
-		{
-			USNEntry file = FRNToName(i->Index);
-			wstring szLower(file.Name);
-			for(unsigned int j = 0; j != szLower.length(); j++)
-				szLower[j] = tolower(szLower[j]);
-			if(szLower.find(szQuery) != -1)
-			{
-				wstring szPath;
-				szPath.reserve(MAX_PATH);
-				GetDir(i->Index, &szPath);
-				rgszResults->insert(rgszResults->end(), szPath);
-			}
-		}
-	}
+	// Store this query
+	LastResult.Query = wstring(strQueryLower);
 }
 
 
@@ -644,7 +700,7 @@ CDriveIndex::CDriveIndex(wstring &strPath)
 DriveInfo CDriveIndex::GetInfo()
 {
 	DriveInfo di;
-	di.NumFiles = (DWORDLONG) rgFiles.size();
+ 	di.NumFiles = (DWORDLONG) rgFiles.size();
 	di.NumDirectories = (DWORDLONG) rgDirectories.size();
 	return di;
 }
