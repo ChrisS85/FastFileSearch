@@ -520,14 +520,6 @@ void CDriveIndex::PopulateIndex()
 
 
 
-//Comparator function for sorting the indexed files by the index value of their structs
-bool SortIndex(IndexedFile const& i, IndexedFile const& j)
-{
-	return i.Index < i.Index;
-}
-
-
-
 // Resolve FRN to filename by enumerating USN journal with StartFileReferenceNumber=FRN
 wstring CDriveIndex::FRNToName(DWORDLONG FRN)
 {

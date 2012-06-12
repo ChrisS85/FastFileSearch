@@ -15,14 +15,6 @@ Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richte
 using namespace std;
 
 
-wstring convertInt(int number)
-{
-	wstringstream ss;//create a stringstream
-	ss << number;//add number to the stream
-	return ss.str();//return a string with the contents of the stream
-}
-
-
 struct IndexedFile
 {
 	DWORDLONG Index;
@@ -69,8 +61,6 @@ protected:
 	vector<IndexedFile> rgFiles;
 	vector<IndexedFile> rgDirectories;
 };
-
-bool SortIndex(IndexedFile const& i, IndexedFile const& j);
 
 
 
