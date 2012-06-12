@@ -1,0 +1,9 @@
+LIBRARY FileSearch
+DESCRIPTION "NTFS Indexing and searching"
+EXPORTS
+   CreateIndex @1
+   DeleteIndex @2
+   Search @3
+   FreeResultsBuffer @4
+   LoadIndexFromDisk @5
+   SaveIndexToDisk @6
