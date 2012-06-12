@@ -36,6 +36,12 @@ struct USNEntry
 	}
 };
 
+struct DriveInfo
+{
+	DWORDLONG NumFiles;
+	DWORDLONG NumDirectories;
+};
+
 class CDriveIndex {
 public:
 	CDriveIndex();
@@ -45,14 +51,15 @@ public:
 	void Find(wstring *pszQuery, vector<wstring> *rgszResults);
 	void PopulateIndex();
 	BOOL SaveToDisk(wstring &strPath);
+	DriveInfo GetInfo();
 
 protected:
 	BOOL Empty();
 	HANDLE Open(WCHAR cDriveLetter, DWORD dwAccess);
 	BOOL Create(DWORDLONG MaximumSize, DWORDLONG AllocationDelta);
 	BOOL Query(PUSN_JOURNAL_DATA pUsnJournalData);
-	long FindOffsetByIndex(DWORDLONG Index);
-	long FindDirOffsetByIndex(DWORDLONG Index);
+	INT64 FindOffsetByIndex(DWORDLONG Index);
+	INT64 FindDirOffsetByIndex(DWORDLONG Index);
 	DWORDLONG MakeAddress(wstring *szName);
 	USNEntry FRNToName(DWORDLONG FRN);
 	void CleanUp();
@@ -80,3 +87,4 @@ WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery);
 void _stdcall FreeResultsBuffer(WCHAR *szResults);
 BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath);
 CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath);
+void _stdcall GetDriveInfo(CDriveIndex *di, DriveInfo *driveInfo);

@@ -1,14 +1,15 @@
-/******************************************************************************
+/**********************************************************************************
 Module name: CDriveIndex.cpp
 Written by: Christian Sander
 Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richter
-******************************************************************************/
+**********************************************************************************/
 
 #include "stdafx.h"
 #include "CDriveIndex.h"
 #include <algorithm>
 #include <iostream>
 #include <fstream>
+
 
 
 // Exported function to create the index of a drive
@@ -25,7 +26,8 @@ CDriveIndex* _stdcall CreateIndex(WCHAR cDrive)
 // Exported function to delete the index of a drive
 void _stdcall DeleteIndex(CDriveIndex *di)
 {
-	delete di;
+	if(dynamic_cast<CDriveIndex*>(di))
+		delete di;
 }
 
 
@@ -35,15 +37,19 @@ void _stdcall DeleteIndex(CDriveIndex *di)
 // separated by newlines for easier processing in non-C++ languages.
 WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery)
 {
-	vector<wstring> results;
-	wstring result;
-	di->Find(&wstring(szQuery), &results);
-	for(unsigned int i = 0; i != results.size(); i++)
-		result += (i == 0 ? TEXT("") : TEXT("\n")) + results[i];
-	WCHAR * szOutput = new WCHAR[result.length() + 1];
-	ZeroMemory(szOutput, (result.length() + 1) * sizeof(szOutput[0]));
-	_snwprintf(szOutput, result.length(), TEXT("%s"), result.c_str());
-	return szOutput;
+	if(dynamic_cast<CDriveIndex*>(di) && szQuery)
+	{
+		vector<wstring> results;
+		wstring result;
+		di->Find(&wstring(szQuery), &results);
+		for(unsigned int i = 0; i != results.size(); i++)
+			result += (i == 0 ? TEXT("") : TEXT("\n")) + results[i];
+		WCHAR * szOutput = new WCHAR[result.length() + 1];
+		ZeroMemory(szOutput, (result.length() + 1) * sizeof(szOutput[0]));
+		_snwprintf(szOutput, result.length(), TEXT("%s"), result.c_str());
+		return szOutput;
+	}
+	return NULL;
 }
 
 
@@ -52,7 +58,8 @@ WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery)
 // This needs to be called after every call to Search to avoid memory leaks.
 void _stdcall FreeResultsBuffer(WCHAR *szResults)
 {
-	delete[] szResults;
+	if(szResults)
+		delete[] szResults;
 }
 
 
@@ -60,7 +67,9 @@ void _stdcall FreeResultsBuffer(WCHAR *szResults)
 // Exported function that loads the database from disk
 CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath)
 {
-	return new CDriveIndex(wstring(szPath));
+	if(szPath)
+		return new CDriveIndex(wstring(szPath));
+	return NULL;
 }
 
 
@@ -68,7 +77,17 @@ CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath)
 // Exported function that saves the database to disk
 BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath)
 {
-	return di->SaveToDisk(wstring(szPath));
+	if(dynamic_cast<CDriveIndex*>(di) && szPath)
+		return di->SaveToDisk(wstring(szPath));
+	return false;
+}
+
+
+// Exported function that returns the number of files and directories
+void _stdcall GetDriveInfo(CDriveIndex *di, DriveInfo *driveInfo)
+{
+	if(dynamic_cast<CDriveIndex*>(di))
+		*driveInfo = di->GetInfo();
 }
 
 
@@ -165,7 +184,6 @@ BOOL CDriveIndex::Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, D
 {
 	IndexedFile i;
 	i.Index = Index;
-	//i.ParentIndex = ParentIndex;
 	if(!Filter)
 		Filter = MakeAddress(szName);
 	i.Filter = Filter;
@@ -180,7 +198,6 @@ BOOL CDriveIndex::AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex
 {
 	IndexedFile i;
 	i.Index = Index;
-	//i.ParentIndex = ParentIndex;
 	if(!Filter)
 		Filter = MakeAddress(szName);
 	i.Filter = Filter;
@@ -302,7 +319,7 @@ DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
 		else if(counts[i] > 2)
 			Address |= 1i64 << 40;
 	}
-	DWORDLONG length = (szlower.length() > 7 ? 7 : szlower.length()) & 0x00000008; //4 bits for length -> 8 max
+	DWORDLONG length = (szlower.length() > 7 ? 7 : szlower.length()) & 0x00000008; //3 bits for length -> 8 max
 	Address |= length << 61;
 	return Address;
 }
@@ -320,17 +337,14 @@ void CDriveIndex::Find(wstring *strQuery, vector<wstring> *rgszResults)
 	QueryFilter = QueryFilter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
 	const WCHAR *szQuery = strQuery->c_str();
 	for(IndexedFile *i = &rgFiles[0]; i != &rgFiles.back(); i++) {
-		//IndexedFile i = rgFiles[dwOffset];
-		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 47-56 for storing lengths up to 512 characters which is smaller than MAX_PATH.
-		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 17 bits
+		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 61-63 for storing lengths up to 8
+		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
 		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 		{
-			/*FRNToName(i->Index, &szName);*/
 			USNEntry file = FRNToName(i->Index);
 			wstring szLower(file.Name);
 			for(unsigned int j = 0; j != szLower.length(); j++)
 				szLower[j] = tolower(szLower[j]);
-			//transform(szLower.begin(), szLower.end(), szLower.begin(), tolower);
 			if(szLower.find(szQuery) != -1)
 			{
 				wstring szPath;
@@ -341,17 +355,14 @@ void CDriveIndex::Find(wstring *strQuery, vector<wstring> *rgszResults)
 		}
 	}
 	for(IndexedFile *i = &rgDirectories[0]; i != &rgDirectories.back(); i++) {
-		//IndexedFile i = rgDirectories[dwOffset];
-		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 47-56 for storing lengths up to 512 characters which is smaller than MAX_PATH.
-		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 17 bits
+		DWORDLONG Length = (i->Filter & 0xE000000000000000i64) >> 61i64; //Bits 61-63 for storing lengths up to 8
+		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFi64; //All but the last 3 bits
 		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 		{
-			//FRNToName(i->Index, &szName);
 			USNEntry file = FRNToName(i->Index);
 			wstring szLower(file.Name);
 			for(unsigned int j = 0; j != szLower.length(); j++)
 				szLower[j] = tolower(szLower[j]);
-			//transform(szLower.begin(), szLower.end(), szLower.begin(), tolower);
 			if(szLower.find(szQuery) != -1)
 			{
 				wstring szPath;
@@ -380,18 +391,14 @@ BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
 {
 	*sz = TEXT("");
 	int n = 0;
-	/*wstring strName;
-	strName.reserve(MAX_PATH);*/
 	do {
-		long Offset;
+		INT64 Offset;
 		if(n == 0)
-			Offset = FindOffsetByIndex(Index); // Possibly optimize this by first getting all offsets? might allow better usage of the cache
+			Offset = FindOffsetByIndex(Index);
 		else
 			Offset = FindDirOffsetByIndex(Index);
 		if(Offset == -1)
 			return FALSE;
-		/*FRNToName(Index, &strName);
-		*sz = strName + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;*/
 		USNEntry file = FRNToName(Index);
 		*sz = file.Name + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;
 		Index = file.ParentIndex;
@@ -405,16 +412,11 @@ BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
 // Constructs a path for a directory
 BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz)
 {
-	// Get path for an index
 	*sz = TEXT("");
-	//wstring strName;
-	//strName.reserve(MAX_PATH);
 	do {
-		long Offset = FindDirOffsetByIndex(Index);
+		INT64 Offset = FindDirOffsetByIndex(Index);
 		if(Offset == -1)
 			return FALSE;
-		//FRNToName(Index, &strName);
-		//*sz = strName + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
 		USNEntry file = FRNToName(Index);
 		*sz = file.Name + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
 		Index = file.ParentIndex;
@@ -425,25 +427,25 @@ BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz)
 
 
 //Finds the position of a file in the database by the FileReferenceNumber
-long CDriveIndex::FindOffsetByIndex(DWORDLONG Index) {
+INT64 CDriveIndex::FindOffsetByIndex(DWORDLONG Index) {
 
 	vector<IndexedFile>::difference_type pos;
 	IndexedFile i;
 	i.Index = Index;
 	pos = distance(rgFiles.begin(), lower_bound(rgFiles.begin(), rgFiles.end(), i));
-	return (long) (pos == rgFiles.size() ? -1 : pos); // this is valid because the number of files doesn't exceed the range of long
+	return (INT64) (pos == rgFiles.size() ? -1 : pos); // this is valid because the number of files doesn't exceed the range of INT64
 }
 
 
 
 //Finds the position of a directory in the database by the FileReferenceNumber
-long CDriveIndex::FindDirOffsetByIndex(DWORDLONG Index)
+INT64 CDriveIndex::FindDirOffsetByIndex(DWORDLONG Index)
 {
 	vector<IndexedFile>::difference_type pos;
 	IndexedFile i;
 	i.Index = Index;
 	pos = distance(rgDirectories.begin(), lower_bound(rgDirectories.begin(), rgDirectories.end(), i));
-	return (long) (pos == rgDirectories.size() ? -1 : pos); // this is valid because the number of files doesn't exceed the range of long
+	return (INT64) (pos == rgDirectories.size() ? -1 : pos); // this is valid because the number of files doesn't exceed the range of INT64
 }
 
 
@@ -634,4 +636,15 @@ CDriveIndex::CDriveIndex(wstring &strPath)
 		file.close();
 	}
 	return;
+}
+
+
+
+// Returns the number of files and folders on this drive
+DriveInfo CDriveIndex::GetInfo()
+{
+	DriveInfo di;
+	di.NumFiles = (DWORDLONG) rgFiles.size();
+	di.NumDirectories = (DWORDLONG) rgDirectories.size();
+	return di;
 }

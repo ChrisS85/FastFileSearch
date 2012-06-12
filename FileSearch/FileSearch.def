@@ -7,3 +7,4 @@ EXPORTS
    FreeResultsBuffer @4
    LoadIndexFromDisk @5
    SaveIndexToDisk @6
+   GetDriveInfo @7

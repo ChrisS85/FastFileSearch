@@ -3,13 +3,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LocalDebuggerCommand>C:\Program Files\Autohotkey\Autohotkey.exe</LocalDebuggerCommand>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>D:\Projekte\C++\FileSearch\Release\FileSearchTest.ahk</LocalDebuggerCommandArguments>
-    <LocalDebuggerWorkingDirectory>D:\Projekte\C++\FileSearch\Release\</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerCommandArguments>$(OutDir)FileSearchTest.ahk</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LocalDebuggerCommand>C:\Program Files\Autohotkey\AutoHotkey.exe</LocalDebuggerCommand>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>D:\Projekte\C++\FileSearch\Debug\FileSearchTest.ahk</LocalDebuggerCommandArguments>
-    <LocalDebuggerWorkingDirectory>D:\Projekte\C++\FileSearch\Debug\</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerCommandArguments>$(OutDir)FileSearchTest.ahk</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
 </Project>
