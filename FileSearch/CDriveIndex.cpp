@@ -35,13 +35,14 @@ void _stdcall DeleteIndex(CDriveIndex *di)
 // Exported function to search in the index of a drive.
 // Returns a string that contains the filepaths of the results,
 // separated by newlines for easier processing in non-C++ languages.
-WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery)
+// nResults is -1 if more results than the limit were found and 0 if an error occured. In this case the return value is NULL.
+WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, BOOL bSort, BOOL bEnhancedSearch, int maxResults, int *nResults)
 {
 	if(dynamic_cast<CDriveIndex*>(di) && szQuery)
 	{
 		vector<SearchResultFile> results;
 		wstring result;
-		di->Find(&wstring(szQuery), &results, true, true);
+		*nResults = di->Find(&wstring(szQuery), &results, bSort, bEnhancedSearch, maxResults);
 		for(unsigned int i = 0; i != results.size(); i++)
 			result += (i == 0 ? TEXT("") : TEXT("\n")) + results[i].Path + results[i].Filename;
 		WCHAR * szOutput = new WCHAR[result.length() + 1];
@@ -49,6 +50,7 @@ WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery)
 		_snwprintf(szOutput, result.length(), TEXT("%s"), result.c_str());
 		return szOutput;
 	}
+	*nResults = 0;
 	return NULL;
 }
 
@@ -333,14 +335,16 @@ DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
 // Internal function for searching in the database.
 // For projects in C++ which use this project it might be preferable to use this function
 // to skip the wrapper.
-void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults, BOOL bSort, BOOL bEnhancedSearch)
+// Returns: number of results, -1 if maxResults != -1 and not all results were found
+int CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults, BOOL bSort, BOOL bEnhancedSearch, int maxResults)
 {
+	int nResults = 0;
 	if(strQuery->length() == 0)
 	{
 		// Store this query
 		LastResult.Query = wstring(TEXT(""));
 		LastResult.Results = vector<SearchResultFile>();
-		return;
+		return nResults;
 	}
 	wstring strQueryLower(*strQuery);
 	for(unsigned int j = 0; j != strQueryLower.length(); j++)
@@ -352,15 +356,25 @@ void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults,
 	DWORDLONG QueryFilter = MakeAddress(&strQueryLower);
 	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
 	QueryFilter = QueryFilter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-
 	if(strQueryLower.compare(LastResult.Query) == 0 && LastResult.Results.size() > 0)
-		for(SearchResultFile *srf = &LastResult.Results[0]; srf <= &LastResult.Results.back(); srf++)
-			rgszResults->insert(rgszResults->end(), *srf);
+	{
+		for(int i = 0; i != LastResult.Results.size(); i++)
+		{
+			nResults++;
+			if(maxResults != -1 && nResults > maxResults)
+			{
+				nResults = -1;
+				break;
+			}
+			rgszResults->insert(rgszResults->end(), LastResult.Results[i]);
+		}
+	}
 	else if(strQueryLower.find(LastResult.Query) != -1 && LastResult.Results.size() > 0)
 	{
 		vector<SearchResultFile> results;
-		for(SearchResultFile *srf = &LastResult.Results[0]; srf <= &LastResult.Results.back(); srf++)
+		for(int i = 0; i != LastResult.Results.size() && (maxResults == -1 || i < maxResults); i++)
 		{
+			SearchResultFile *srf = & LastResult.Results[i];
 			DWORDLONG Length = (srf->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
 			DWORDLONG Filter = srf->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
 			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
@@ -376,6 +390,12 @@ void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults,
 				}
 				if(srf->MatchQuality > 0.6f)
 				{
+					nResults++;
+					if(maxResults != -1 && nResults > maxResults)
+					{
+						nResults = -1;
+						break;
+					}
 					rgszResults->insert(rgszResults->end(), *srf);
 					results.insert(results.end(), *srf);
 				}
@@ -406,6 +426,12 @@ void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults,
 
 				if(MatchQuality > 0.6f)
 				{
+					nResults++;
+					if(maxResults != -1 && nResults > maxResults)
+					{
+						nResults = -1;
+						break;
+					}
 					SearchResultFile srf;
 					srf.Filename = file.Name;
 					srf.Path.reserve(MAX_PATH);
@@ -424,41 +450,50 @@ void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults,
 				}
 			}
 		}
-		for(IndexedFile *i = &rgDirectories[0]; i <= &rgDirectories.back(); i++)
+		if(maxResults == -1 || (nResults < maxResults && nResults != -1))
 		{
-			DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
-			DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+			for(IndexedFile *i = &rgDirectories[0]; i <= &rgDirectories.back(); i++)
 			{
-				USNEntry file = FRNToName(i->Index);
-				float MatchQuality;
-				if(bEnhancedSearch)
-					MatchQuality = FuzzySearch(file.Name, *strQuery);
-				else
+				DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+				DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+				if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
 				{
-					wstring szLower(file.Name);
-					for(unsigned int j = 0; j != szLower.length(); j++)
-						szLower[j] = tolower(szLower[j]);
-					MatchQuality = szLower.find(szQuery) != -1;
-				}
+					USNEntry file = FRNToName(i->Index);
+					float MatchQuality;
+					if(bEnhancedSearch)
+						MatchQuality = FuzzySearch(file.Name, *strQuery);
+					else
+					{
+						wstring szLower(file.Name);
+						for(unsigned int j = 0; j != szLower.length(); j++)
+							szLower[j] = tolower(szLower[j]);
+						MatchQuality = szLower.find(szQuery) != -1;
+					}
 
-				if(MatchQuality > 0.6f)
-				{
-					SearchResultFile srf;
-					srf.Filename = file.Name;
-					srf.Path.reserve(MAX_PATH);
-					Get(i->Index, &srf.Path);
+					if(MatchQuality > 0.6f)
+					{
+						nResults++;
+						if(maxResults != -1 && nResults > maxResults)
+						{
+							nResults = -1;
+							break;
+						}
+						SearchResultFile srf;
+						srf.Filename = file.Name;
+						srf.Path.reserve(MAX_PATH);
+						Get(i->Index, &srf.Path);
 
-					//split path
-					WCHAR szDrive[_MAX_DRIVE];
-					WCHAR szPath[_MAX_PATH];
-					WCHAR szName[_MAX_FNAME];
-					WCHAR szExt[_MAX_EXT];
-					_wsplitpath(srf.Path.c_str(), szDrive, szPath, szName, szExt);
-					srf.Path = wstring(szDrive) + wstring(szPath);
-					srf.Filter = i->Filter;
-					srf.MatchQuality = MatchQuality;
-					rgszResults->insert(rgszResults->end(), srf);
+						//split path
+						WCHAR szDrive[_MAX_DRIVE];
+						WCHAR szPath[_MAX_PATH];
+						WCHAR szName[_MAX_FNAME];
+						WCHAR szExt[_MAX_EXT];
+						_wsplitpath(srf.Path.c_str(), szDrive, szPath, szName, szExt);
+						srf.Path = wstring(szDrive) + wstring(szPath);
+						srf.Filter = i->Filter;
+						srf.MatchQuality = MatchQuality;
+						rgszResults->insert(rgszResults->end(), srf);
+					}
 				}
 			}
 		}
@@ -469,6 +504,7 @@ void CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults,
 		sort(rgszResults->begin(), rgszResults->end());
 	// Store this query
 	LastResult.Query = wstring(strQueryLower);
+	return nResults;
 }
 
 
@@ -751,11 +787,8 @@ DriveInfo CDriveIndex::GetInfo()
 
 //Performs a fuzzy search for shorter in longer.
 //return values range from 0.0 = identical to 1.0 = completely different. 0.4 seems appropriate
-float FuzzySearch(wstring &longer, wstring &shorter, BOOL UseFuzzySearch)
+float FuzzySearch(wstring &longer, wstring &shorter)
 {
-	if(longer.compare(shorter) == 0)
-		return 1.0f;
-
 	//Note: All string lengths are shorter than MAX_PATH, so an uint is perfectly fitted.
 	unsigned int lenl = (unsigned int) longer.length();
 	unsigned int lens = (unsigned int) shorter.length();
@@ -767,6 +800,18 @@ float FuzzySearch(wstring &longer, wstring &shorter, BOOL UseFuzzySearch)
 	unsigned int Contained = (unsigned int) longer.find(shorter);
 	if(Contained != wstring::npos)
 		return Contained == 0 ? 1.0f : 0.8f;
+
+	wstring longerlower(longer);
+	wstring shorterlower(shorter);
+	for(unsigned int i = 0; i != lenl; i++)
+		longerlower[i] = tolower(longer[i]);
+	for(unsigned int i = 0; i != lens; i++)
+		shorterlower[i] = tolower(shorter[i]);
+
+	//Check if the shorter string is a substring of the longer string
+	Contained = (unsigned int) longerlower.find(shorterlower);
+	if(Contained != wstring::npos)
+		return Contained == 0 ? 0.9f : 0.7f;
 
 	//Check if string can be matched by omitting characters
 	if(lens < 5)
@@ -791,74 +836,5 @@ float FuzzySearch(wstring &longer, wstring &shorter, BOOL UseFuzzySearch)
 		if(matched == lens)
 			return 0.9f; //Slightly worse than direct matches
 	}
-	//Calculate fuzzy string difference
-	if(UseFuzzySearch)
-	{
-		float max = 0.0f;
-		for(unsigned int i = 0; i != lenl - lens; i++)
-			max = max(max, 1 - StringDifference(shorter, longer.substr(i, lens)));
-		return max;
-	}
 	return 0;
-}
-
-
-//By Toralf:
-//basic idea for SIFT3 code by Siderite Zackwehdex 
-//http://siderite.blogspot.com/2007/04/super-fast-and-accurate-string-distance.html 
-//took idea to normalize it to longest string from Brad Wood 
-//http://www.bradwood.com/string_compare/ 
-//Own work: 
-// - when character only differ in case, LSC is a 0.8 match for this character 
-// - modified code for speed, might lead to different results compared to original code 
-// - optimized for speed (30% faster then original SIFT3 and 13.3 times faster than basic Levenshtein distance) 
-//http://www.autohotkey.com/forum/topic59407.html 
-// returns a float: between "0.0 = identical" and "1.0 = nothing in common" 
-float StringDifference(wstring &string1, wstring &string2, unsigned int maxOffset)
-{
-	if(string1.compare(TEXT("")) == 0 || string2.compare(TEXT("")) == 0)
-		return (string1.compare(string2) == 0 ? 0.0f : 1.0f);
-	unsigned int l1 = (unsigned int) string1.length();
-	unsigned int l2 = (unsigned int) string2.length();
-	wstring string1lower(string1);
-	wstring string2lower(string2);
-	for(unsigned int i = 0; i != l1; i++)
-		string1lower[i] = tolower(string1[i]);
-	for(unsigned int i = 0; i != l2; i++)
-		string2lower[i] = tolower(string2[i]);
-	if(string1lower.compare(string2lower) == 0)
-		return (string1.compare(string2) ? 0.0f : 0.2f/(float)l1); //either identical or (assumption:) "only one" char with different case
-	unsigned int ni = 0;
-	unsigned int mi = 0;
-	float lcs = 0;
-	while((ni <= l1) && (mi <= l2))
-	{
-		if(string1[ni] == string2[mi])
-			lcs++;
-		else if(tolower(string1[ni]) == tolower(string2[mi]))
-			lcs += 0.8f;
-		else
-		{
-			for(unsigned int i = 0; i != maxOffset; i++)
-			{
-				unsigned int oi = ni + i;
-				unsigned int pi = mi + i;
-				if((tolower(string1[oi]) == tolower(string2[mi])) && (oi <= l1))
-				{
-					ni = oi;
-					lcs += (string1[oi] == string2[mi] ? 1.0f : 0.8f);
-					break;
-				} 
-				if((string1[ni] == string2[pi]) && (pi <= l2))
-				{ 
-					mi = pi;
-					lcs += (string1[ni] == string2[pi] ? 1.0f : 0.8f);
-					break;
-				}
-			} 
-		}
-		ni++;
-		mi++;
-	} 
-	return (((float)l1 + (float)l2)/2.0f - lcs) / (float) max(l1, l2);
 }

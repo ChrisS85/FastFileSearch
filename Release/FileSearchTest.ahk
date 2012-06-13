@@ -16,6 +16,7 @@ NumFiles := NumGet(DriveInfo, 0, "uint64")
 NumDirectories := NumGet(DriveInfo, 8, "uint64")
 Gui, Add, Edit, w100 gButton vQueryString, .exe
 Gui, Add, Button, gButton Default, Search
+Gui, Add, CheckBox, vLimitResults, Limit Results to 1000
 Gui, Add, Edit, w500 h500 vResults Multi, Index time: %tmIndex% seconds`n%NumFiles% files total, %NumDirectories% directories total
 Gui, Add, Button, gLoad, Load Index
 Gui, Add, Button, gSave, Save Index
@@ -28,7 +29,7 @@ Gui, Submit, NoHide
 tmSearch := A_TickCount
 SearchString := QueryString
 if(StrLen(QueryString) > 2)
-	results := Query(QueryString)
+	results := Query(QueryString, LimitResults ? 1000 : -1)
 else
 	results := ""
 tmSearch := (A_TickCount - tmSearch ) / 1000
@@ -60,11 +61,11 @@ tmSave := A_TickCount - tmSave
 GuiControl,, Results, Save time: %tmSave% seconds`n%NumFiles% files total, %NumDirectories% directories total
 return
 
-Query(String)
+Query(String, LimitResults)
 {
 	global DriveIndex, DllPath
-	pResult := DllCall(DllPath "\Search", "PTR", DriveIndex,  wstr, String, PTR)
-	strResult := StrGet(presult + 0)
+	pResult := DllCall(DllPath "\Search", "PTR", DriveIndex,  "wstr", String, "int", true, "int", true, "int", LimitResults, "int*", nResults, PTR)
+	strResult := StrGet(presult + 0) (nResults = -1 ? "`nThere were more results..." : "")
 	;DllCall(DllPath "FreeResultsBuffer", "PTR", pResult)
 	return strResult
 }

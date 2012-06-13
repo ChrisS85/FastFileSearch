@@ -81,7 +81,7 @@ public:
 	CDriveIndex(wstring &strPath);
 	~CDriveIndex();
 	BOOL Init(WCHAR cDrive);
-	void Find(wstring *pszQuery, vector<SearchResultFile> *rgszResults, BOOL bSort = true, BOOL bEnhancedSearch = true);
+	int Find(wstring *pszQuery, vector<SearchResultFile> *rgszResults, BOOL bSort = true, BOOL bEnhancedSearch = true, int maxResults = -1);
 	void PopulateIndex();
 	BOOL SaveToDisk(wstring &strPath);
 	DriveInfo GetInfo();
@@ -112,13 +112,12 @@ protected:
 
 	SearchResult LastResult;
 };
-float FuzzySearch(wstring &longer, wstring &shorter, BOOL UseFuzzySearch = false);
-float StringDifference(wstring &string1, wstring &string2, unsigned int maxOffset = 2);
+float FuzzySearch(wstring &longer, wstring &shorter);
 
 //Exported functions
 CDriveIndex* _stdcall CreateIndex(WCHAR Drive);
 void _stdcall DeleteIndex(CDriveIndex *di);
-WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery);
+WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, BOOL bSort, BOOL bEnhancedSearch, int maxResults, BOOL *bFoundAll);
 void _stdcall FreeResultsBuffer(WCHAR *szResults);
 BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath);
 CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath);
