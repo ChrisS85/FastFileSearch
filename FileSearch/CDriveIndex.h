@@ -44,12 +44,30 @@ struct DriveInfo
 
 struct SearchResultFile
 {
+	wstring Filename;
 	wstring Path;
 	DWORDLONG Filter;
-	SearchResultFile(wstring aPath, DWORDLONG aFilter)
+	float MatchQuality;
+	SearchResultFile()
 	{
+	}
+	SearchResultFile(const SearchResultFile &srf)
+	{
+		Filename = srf.Filename;
+		Path = srf.Path;
+		Filter = srf.Filter;
+		MatchQuality = srf.MatchQuality;
+	}
+	SearchResultFile(wstring aPath, wstring aFilename, DWORDLONG aFilter, float aMatchQuality = 1)
+	{
+		Filename = aFilename;
 		Path = aPath;
 		Filter = aFilter;
+		MatchQuality = aMatchQuality;
+	}
+	bool operator<(const SearchResultFile& i)
+	{
+		return MatchQuality == i.MatchQuality ? Path + Filename < i.Path + i.Filename : MatchQuality > i.MatchQuality;
 	}
 };
 struct SearchResult
@@ -63,7 +81,7 @@ public:
 	CDriveIndex(wstring &strPath);
 	~CDriveIndex();
 	BOOL Init(WCHAR cDrive);
-	void Find(wstring *pszQuery, vector<wstring> *rgszResults);
+	void Find(wstring *pszQuery, vector<SearchResultFile> *rgszResults, BOOL bSort = true, BOOL bEnhancedSearch = true);
 	void PopulateIndex();
 	BOOL SaveToDisk(wstring &strPath);
 	DriveInfo GetInfo();
@@ -94,8 +112,8 @@ protected:
 
 	SearchResult LastResult;
 };
-
-
+float FuzzySearch(wstring &longer, wstring &shorter, BOOL UseFuzzySearch = false);
+float StringDifference(wstring &string1, wstring &string2, unsigned int maxOffset = 2);
 
 //Exported functions
 CDriveIndex* _stdcall CreateIndex(WCHAR Drive);
