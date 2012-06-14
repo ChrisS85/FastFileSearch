@@ -372,7 +372,7 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 	wstring strQueryPathLower(strQueryPath != NULL ? *strQueryPath : TEXT(""));
 	for(unsigned int j = 0; j != strQueryPathLower.length(); j++)
 		strQueryPathLower[j] = tolower((*strQueryPath)[j]);
-
+	wstring* pstrQueryPathLower = strQueryPath != NULL && strQueryPathLower.length() > 0 ? &strQueryPathLower : NULL;
 	//Calculate Filter value and length of the current query which are compared with the cached ones to skip many of them
 	DWORDLONG QueryFilter = MakeFilter(&strQueryLower);
 	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
@@ -388,7 +388,7 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 		for(int i = 0; i != LastResult.Results.size(); i++)
 		{
 			BOOL bFound = true;
-			if(strQueryPath != NULL)
+			if(pstrQueryPathLower != NULL)
 			{
 				wstring strPathLower(LastResult.Results[i].Path);
 				for(unsigned int j = 0; j != strPathLower.length(); j++)
@@ -424,7 +424,7 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 		//Keep the position of the last result
 		SearchWhere = LastResult.SearchEndedWhere;
 		iOffset = LastResult.iOffset;
-		FindInPreviousResults(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), *rgsrfResults, 0, bEnhancedSearch, maxResults, nResults);
+		FindInPreviousResults(*strQuery, szQueryLower, QueryFilter, QueryLength, pstrQueryPathLower, *rgsrfResults, 0, bEnhancedSearch, maxResults, nResults);
 
 		//if the last search was limited and didn't finish because it found enough files and we don't have the maximum number of results yet
 		//we need to continue the search where the last one stopped.
@@ -449,7 +449,7 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 	if(SearchWhere == IN_DIRECTORIES && !bSkipSearch)
 	{
 		//Find in directory index
-		FindInJournal(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), rgDirectories, *rgsrfResults, iOffset, bEnhancedSearch, maxResults, nResults);
+		FindInJournal(*strQuery, szQueryLower, QueryFilter, QueryLength, pstrQueryPathLower, rgDirectories, *rgsrfResults, iOffset, bEnhancedSearch, maxResults, nResults);
 		//If we found the maximum number of results in the directory index we stop here
 		if(maxResults != -1 && nResults == -1)
 			iOffset++; //Start with next entry on the next incremental search
