@@ -14,7 +14,9 @@ Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richte
 #include <sstream>
 using namespace std;
 
-
+#define NO_WHERE 0
+#define IN_FILES 1
+#define IN_DIRECTORIES 2
 struct IndexedFile
 {
 	DWORDLONG Index;
@@ -74,6 +76,9 @@ struct SearchResult
 {
 	wstring Query;
 	vector<SearchResultFile> Results;
+	int iOffset; //-1 when finished
+	unsigned int SearchEndedWhere;
+	int maxResults;
 };
 class CDriveIndex {
 public:
@@ -81,7 +86,9 @@ public:
 	CDriveIndex(wstring &strPath);
 	~CDriveIndex();
 	BOOL Init(WCHAR cDrive);
-	int Find(wstring *pszQuery, vector<SearchResultFile> *rgszResults, BOOL bSort = true, BOOL bEnhancedSearch = true, int maxResults = -1);
+	int Find(wstring *strQuery, wstring *strPath, vector<SearchResultFile> *rgsrfResults, BOOL bSort = true, BOOL bEnhancedSearch = true, int maxResults = -1);
+	void FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<IndexedFile> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
+	void FindInPreviousResults(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
 	void PopulateIndex();
 	BOOL SaveToDisk(wstring &strPath);
 	DriveInfo GetInfo();
@@ -93,7 +100,7 @@ protected:
 	BOOL Query(PUSN_JOURNAL_DATA pUsnJournalData);
 	INT64 FindOffsetByIndex(DWORDLONG Index);
 	INT64 FindDirOffsetByIndex(DWORDLONG Index);
-	DWORDLONG MakeAddress(wstring *szName);
+	DWORDLONG MakeFilter(wstring *szName);
 	USNEntry FRNToName(DWORDLONG FRN);
 	void CleanUp();
 	BOOL Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
@@ -117,7 +124,7 @@ float FuzzySearch(wstring &longer, wstring &shorter);
 //Exported functions
 CDriveIndex* _stdcall CreateIndex(WCHAR Drive);
 void _stdcall DeleteIndex(CDriveIndex *di);
-WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, BOOL bSort, BOOL bEnhancedSearch, int maxResults, BOOL *bFoundAll);
+WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, WCHAR *szPath, BOOL bSort, BOOL bEnhancedSearch, int maxResults, BOOL *bFoundAll);
 void _stdcall FreeResultsBuffer(WCHAR *szResults);
 BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath);
 CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath);

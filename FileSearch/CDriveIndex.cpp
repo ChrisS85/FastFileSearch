@@ -36,13 +36,15 @@ void _stdcall DeleteIndex(CDriveIndex *di)
 // Returns a string that contains the filepaths of the results,
 // separated by newlines for easier processing in non-C++ languages.
 // nResults is -1 if more results than the limit were found and 0 if an error occured. In this case the return value is NULL.
-WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, BOOL bSort, BOOL bEnhancedSearch, int maxResults, int *nResults)
+WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, WCHAR *szPath, BOOL bSort, BOOL bEnhancedSearch, int maxResults, int *nResults)
 {
 	if(dynamic_cast<CDriveIndex*>(di) && szQuery)
 	{
 		vector<SearchResultFile> results;
 		wstring result;
-		*nResults = di->Find(&wstring(szQuery), &results, bSort, bEnhancedSearch, maxResults);
+		int numResults = di->Find(&wstring(szQuery), szPath != NULL ? &wstring(szPath) : NULL, &results, bSort, bEnhancedSearch, maxResults);
+		if(nResults != NULL)
+			*nResults = numResults;
 		for(unsigned int i = 0; i != results.size(); i++)
 			result += (i == 0 ? TEXT("") : TEXT("\n")) + results[i].Path + results[i].Filename;
 		WCHAR * szOutput = new WCHAR[result.length() + 1];
@@ -50,7 +52,8 @@ WCHAR* _stdcall Search(CDriveIndex *di, WCHAR *szQuery, BOOL bSort, BOOL bEnhanc
 		_snwprintf(szOutput, result.length(), TEXT("%s"), result.c_str());
 		return szOutput;
 	}
-	*nResults = 0;
+	if(nResults != NULL)
+		*nResults = 0;
 	return NULL;
 }
 
@@ -191,7 +194,7 @@ BOOL CDriveIndex::Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, D
 	IndexedFile i;
 	i.Index = Index;
 	if(!Filter)
-		Filter = MakeAddress(szName);
+		Filter = MakeFilter(szName);
 	i.Filter = Filter;
 	rgFiles.insert(rgFiles.end(), i);
 	return(TRUE);
@@ -205,7 +208,7 @@ BOOL CDriveIndex::AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex
 	IndexedFile i;
 	i.Index = Index;
 	if(!Filter)
-		Filter = MakeAddress(szName);
+		Filter = MakeFilter(szName);
 	i.Filter = Filter;
 	rgDirectories.insert(rgDirectories.end(), i);
 	return(TRUE);
@@ -215,7 +218,7 @@ BOOL CDriveIndex::AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex
 
 // Calculates a 64bit value that is used to filter out many files before comparing their filenames
 // This method gives a huge speed boost.
-DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
+DWORDLONG CDriveIndex::MakeFilter(wstring *szName)
 {
 	/*
 	Creates an address that is used to filter out strings that don't contain the queried characters
@@ -336,9 +339,21 @@ DWORDLONG CDriveIndex::MakeAddress(wstring *szName)
 // For projects in C++ which use this project it might be preferable to use this function
 // to skip the wrapper.
 // Returns: number of results, -1 if maxResults != -1 and not all results were found
-int CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults, BOOL bSort, BOOL bEnhancedSearch, int maxResults)
+int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchResultFile> *rgsrfResults, BOOL bSort, BOOL bEnhancedSearch, int maxResults)
 {
+	//These variables are used to control the flow of execution in this function.
+
+	//Indicates where results should be searched
+	unsigned int SearchWhere = IN_FILES;
+	//Offset for vector marked by SearchWhere
+	unsigned int iOffset = 0;
+	//Used to skip the search when the previous two properties should be carried over to the next search without actually using them now.
+	BOOL bSkipSearch = false;
+
+	//Number of results in this search. -1 if more than maximum number of results.
 	int nResults = 0;
+
+	//No query, just ignore this call
 	if(strQuery->length() == 0)
 	{
 		// Store this query
@@ -346,97 +361,173 @@ int CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults, 
 		LastResult.Results = vector<SearchResultFile>();
 		return nResults;
 	}
+
+	//Create lower query string for case-insensitive search
 	wstring strQueryLower(*strQuery);
 	for(unsigned int j = 0; j != strQueryLower.length(); j++)
 		strQueryLower[j] = tolower(strQueryLower[j]);
-	const WCHAR *szQuery = strQueryLower.c_str();
+	const WCHAR *szQueryLower = strQueryLower.c_str();
 	
-	
-	//finds all files that contain pszQuery in their names
-	DWORDLONG QueryFilter = MakeAddress(&strQueryLower);
+	//Create lower query path string for case-insensitive search
+	wstring strQueryPathLower(strQueryPath != NULL ? *strQueryPath : TEXT(""));
+	for(unsigned int j = 0; j != strQueryPathLower.length(); j++)
+		strQueryPathLower[j] = tolower((*strQueryPath)[j]);
+
+	//Calculate Filter value and length of the current query which are compared with the cached ones to skip many of them
+	DWORDLONG QueryFilter = MakeFilter(&strQueryLower);
 	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
 	QueryFilter = QueryFilter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-	if(strQueryLower.compare(LastResult.Query) == 0 && LastResult.Results.size() > 0)
+
+	//If the same query string as in the last query was used
+	if(strQueryLower.compare(LastResult.Query) == 0 && LastResult.Results.size() > 0 && (LastResult.SearchEndedWhere == NO_WHERE && iOffset != 1)) // need proper condition here to skip
 	{
+		//Keep the position of the last result
+		SearchWhere = LastResult.SearchEndedWhere;
+		iOffset = LastResult.iOffset;
+		bSkipSearch = true;
 		for(int i = 0; i != LastResult.Results.size(); i++)
 		{
-			nResults++;
-			if(maxResults != -1 && nResults > maxResults)
+			BOOL bFound = true;
+			if(strQueryPath != NULL)
 			{
-				nResults = -1;
-				break;
+				wstring strPathLower(LastResult.Results[i].Path);
+				for(unsigned int j = 0; j != strPathLower.length(); j++)
+					strPathLower[j] = tolower(LastResult.Results[i].Path[j]);
+				bFound = strPathLower.find(strQueryPathLower) != -1;
 			}
-			rgszResults->insert(rgszResults->end(), LastResult.Results[i]);
+			if(bFound)
+			{
+				nResults++;
+				//If the result limit has decreased and we have found all (shouldn't happen in common scenarios)
+				if(maxResults != -1 && nResults > maxResults)
+				{
+					nResults = -1;
+				
+					//If we get here, the next incremental should start fresh, but only if it requires more results than this one.
+					//To accomplish this we make this result contain no information about the origin of these results.
+					SearchWhere = NO_WHERE;
+					iOffset = 1;
+					break;
+				}
+				rgsrfResults->insert(rgsrfResults->end(), LastResult.Results[i]);
+			}
 		}
+		//if the last search was limited and didn't finish because it found enough files and we don't have the maximum number of results yet
+		//we need to continue the search where the last one stopped.
+		if(LastResult.maxResults != -1 && LastResult.SearchEndedWhere != NO_WHERE && (maxResults == -1 || nResults < maxResults))
+			bSkipSearch = false;
 	}
+	//If this query is more specific than the previous one, it can use the results from the previous query
 	else if(strQueryLower.find(LastResult.Query) != -1 && LastResult.Results.size() > 0)
 	{
-		vector<SearchResultFile> results;
-		for(int i = 0; i != LastResult.Results.size() && (maxResults == -1 || i < maxResults); i++)
-		{
-			SearchResultFile *srf = & LastResult.Results[i];
-			DWORDLONG Length = (srf->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
-			DWORDLONG Filter = srf->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
-			{
-				if(bEnhancedSearch)
-					srf->MatchQuality = FuzzySearch(srf->Filename, *strQuery);
-				else
-				{
-					wstring szLower(srf->Filename);
-					for(unsigned int j = 0; j != szLower.length(); j++)
-						szLower[j] = tolower(szLower[j]);
-					srf->MatchQuality = szLower.find(szQuery) != -1;
-				}
-				if(srf->MatchQuality > 0.6f)
-				{
-					nResults++;
-					if(maxResults != -1 && nResults > maxResults)
-					{
-						nResults = -1;
-						break;
-					}
-					rgszResults->insert(rgszResults->end(), *srf);
-					results.insert(results.end(), *srf);
-				}
-			}
-		}
-		LastResult.Results = results;
+		bSkipSearch = true;
+		//Keep the position of the last result
+		SearchWhere = LastResult.SearchEndedWhere;
+		iOffset = LastResult.iOffset;
+		FindInPreviousResults(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), *rgsrfResults, 0, bEnhancedSearch, maxResults, nResults);
+
+		//if the last search was limited and didn't finish because it found enough files and we don't have the maximum number of results yet
+		//we need to continue the search where the last one stopped.
+		if(LastResult.maxResults != -1 && LastResult.SearchEndedWhere != NO_WHERE && (maxResults == -1 || nResults < maxResults))
+			bSkipSearch = false;
 	}
-	else
+
+	if(SearchWhere == IN_FILES && !bSkipSearch)
 	{
-		LastResult.Results = vector<SearchResultFile>();
-		for(IndexedFile *i = &rgFiles[0]; i <= &rgFiles.back(); i++)
+		//Find in file index
+		FindInJournal(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), rgFiles, *rgsrfResults, iOffset, bEnhancedSearch, maxResults, nResults);
+		//If we found the maximum number of results in the file index we stop here
+		if(maxResults != -1 && nResults == -1)
+			iOffset++; //Start with next entry on the next incremental search
+		else //Search isn't limited or not all results found yet, continue in directory index
 		{
-			DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
-			DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-			if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+			SearchWhere = IN_DIRECTORIES;
+			iOffset = 0;
+		}
+	}
+
+	if(SearchWhere == IN_DIRECTORIES && !bSkipSearch)
+	{
+		//Find in directory index
+		FindInJournal(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), rgDirectories, *rgsrfResults, iOffset, bEnhancedSearch, maxResults, nResults);
+		//If we found the maximum number of results in the directory index we stop here
+		if(maxResults != -1 && nResults == -1)
+			iOffset++; //Start with next entry on the next incremental search
+		else //Search isn't limited or less than the maximum number of results found
+		{
+			SearchWhere = NO_WHERE;
+			iOffset = 0;
+		}
+	}
+
+	//Sort by match quality and name
+	if(bSort)
+		sort(rgsrfResults->begin(), rgsrfResults->end());
+	
+	// Store this query
+	LastResult.Query = wstring(strQueryLower);
+
+	//Clear old results, they will be replaced with the current ones
+	LastResult.Results = vector<SearchResultFile>();
+
+	//Store number of results (Needed for incremental search)
+	LastResult.iOffset = iOffset;
+
+	//Store if this search was limited
+	LastResult.maxResults = maxResults;
+
+	//Store where the current search ended due to file limit (or if it didn't);
+	LastResult.SearchEndedWhere = SearchWhere;
+
+	//Update last results
+	for(unsigned int i = 0; i != rgsrfResults->size(); i++)
+		LastResult.Results.insert(LastResult.Results.end(), (*rgsrfResults)[i]);
+
+	return nResults;
+}
+
+void CDriveIndex::FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<IndexedFile> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults)
+{
+	for(IndexedFile *i = &rgJournalIndex[0]; i <= &rgJournalIndex.back(); i++)
+	{
+		DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+		{
+			USNEntry file = FRNToName(i->Index);
+			float MatchQuality;
+			if(bEnhancedSearch)
+				MatchQuality = FuzzySearch(file.Name, strQuery);
+			else
 			{
-				USNEntry file = FRNToName(i->Index);
-				float MatchQuality;
-				if(bEnhancedSearch)
-					MatchQuality = FuzzySearch(file.Name, *strQuery);
-				else
+				wstring szLower(file.Name);
+				for(unsigned int j = 0; j != szLower.length(); j++)
+					szLower[j] = tolower(szLower[j]);
+				MatchQuality = szLower.find(strQuery) != -1;
+			}
+
+			if(MatchQuality > 0.6f)
+			{
+				nResults++;
+				if(maxResults != -1 && nResults > maxResults)
 				{
-					wstring szLower(file.Name);
-					for(unsigned int j = 0; j != szLower.length(); j++)
-						szLower[j] = tolower(szLower[j]);
-					MatchQuality = szLower.find(szQuery) != -1;
+					nResults = -1;
+					break;
 				}
-
-				if(MatchQuality > 0.6f)
+				SearchResultFile srf;
+				srf.Filename = file.Name;
+				srf.Path.reserve(MAX_PATH);
+				Get(i->Index, &srf.Path);
+				BOOL bFound = true;
+				if(strQueryPath != NULL)
 				{
-					nResults++;
-					if(maxResults != -1 && nResults > maxResults)
-					{
-						nResults = -1;
-						break;
-					}
-					SearchResultFile srf;
-					srf.Filename = file.Name;
-					srf.Path.reserve(MAX_PATH);
-					Get(i->Index, &srf.Path);
-
+					wstring strPathLower(srf.Path);
+					for(unsigned int j = 0; j != strPathLower.length(); j++)
+						strPathLower[j] = tolower(strPathLower[j]);
+					bFound = strPathLower.find(*strQueryPath) != -1;
+				}
+				if(bFound)
+				{
 					//split path
 					WCHAR szDrive[_MAX_DRIVE];
 					WCHAR szPath[_MAX_PATH];
@@ -446,68 +537,55 @@ int CDriveIndex::Find(wstring *strQuery, vector<SearchResultFile> *rgszResults, 
 					srf.Path = wstring(szDrive) + wstring(szPath);
 					srf.Filter = i->Filter;
 					srf.MatchQuality = MatchQuality;
-					rgszResults->insert(rgszResults->end(), srf);
+					rgsrfResults.insert(rgsrfResults.end(), srf);
 				}
 			}
 		}
-		if(maxResults == -1 || (nResults < maxResults && nResults != -1))
-		{
-			for(IndexedFile *i = &rgDirectories[0]; i <= &rgDirectories.back(); i++)
-			{
-				DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
-				DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
-				if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
-				{
-					USNEntry file = FRNToName(i->Index);
-					float MatchQuality;
-					if(bEnhancedSearch)
-						MatchQuality = FuzzySearch(file.Name, *strQuery);
-					else
-					{
-						wstring szLower(file.Name);
-						for(unsigned int j = 0; j != szLower.length(); j++)
-							szLower[j] = tolower(szLower[j]);
-						MatchQuality = szLower.find(szQuery) != -1;
-					}
-
-					if(MatchQuality > 0.6f)
-					{
-						nResults++;
-						if(maxResults != -1 && nResults > maxResults)
-						{
-							nResults = -1;
-							break;
-						}
-						SearchResultFile srf;
-						srf.Filename = file.Name;
-						srf.Path.reserve(MAX_PATH);
-						Get(i->Index, &srf.Path);
-
-						//split path
-						WCHAR szDrive[_MAX_DRIVE];
-						WCHAR szPath[_MAX_PATH];
-						WCHAR szName[_MAX_FNAME];
-						WCHAR szExt[_MAX_EXT];
-						_wsplitpath(srf.Path.c_str(), szDrive, szPath, szName, szExt);
-						srf.Path = wstring(szDrive) + wstring(szPath);
-						srf.Filter = i->Filter;
-						srf.MatchQuality = MatchQuality;
-						rgszResults->insert(rgszResults->end(), srf);
-					}
-				}
-			}
-		}
-		for(unsigned int i = 0; i != rgszResults->size(); i++)
-			LastResult.Results.insert(LastResult.Results.end(), (*rgszResults)[i]);
 	}
-	if(bSort)
-		sort(rgszResults->begin(), rgszResults->end());
-	// Store this query
-	LastResult.Query = wstring(strQueryLower);
-	return nResults;
 }
-
-
+void CDriveIndex::FindInPreviousResults(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults)
+{
+	for(int i = 0; i != LastResult.Results.size() && (maxResults == -1 || i < maxResults); i++)
+	{
+		SearchResultFile *srf = & LastResult.Results[i];
+		DWORDLONG Length = (srf->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
+		DWORDLONG Filter = srf->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
+		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
+		{
+			if(bEnhancedSearch)
+				srf->MatchQuality = FuzzySearch(srf->Filename, strQuery);
+			else
+			{
+				wstring szLower(srf->Filename);
+				for(unsigned int j = 0; j != szLower.length(); j++)
+					szLower[j] = tolower(szLower[j]);
+				srf->MatchQuality = szLower.find(szQueryLower) != -1;
+			}
+			if(srf->MatchQuality > 0.6f)
+			{
+				BOOL bFound = true;
+				if(strQueryPath != NULL)
+				{
+					wstring strPathLower(srf->Path);
+					for(unsigned int j = 0; j != srf->Path.length(); j++)
+						strPathLower[j] = tolower(srf->Path[j]);
+					bFound = strPathLower.find(*strQueryPath) != -1;
+				}
+				if(bFound)
+				{
+					nResults++;
+					if(maxResults != -1 && nResults > maxResults)
+					{
+						nResults = -1;
+						break;
+					}
+					rgsrfResults.insert(rgsrfResults.end(), *srf);
+				}
+			}
+		}
+	}
+}
+	
 
 // Clears the database
 BOOL CDriveIndex::Empty()
