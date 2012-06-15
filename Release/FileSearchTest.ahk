@@ -4,7 +4,7 @@ if(!A_IsAdmin)
 	run *runas %A_ScriptFullPath%
 	ExitApp
 }
-Drive := "C"
+Drive := "D"
 DllPath := A_ScriptDir "\FileSearch.dll"
 hModule := DllCall("LoadLibrary", "Str", DllPath, "PTR")
 tmIndex := A_TickCount
@@ -31,11 +31,14 @@ Gui, Submit, NoHide
 tmSearch := A_TickCount
 SearchString := QueryString
 if(StrLen(QueryString) > 2)
-	results := Query(QueryString, QueryPath, LimitResults ? 1000 : -1)
+	results := Query(QueryString, QueryPath, LimitResults ? 1000 : -1, nResults)
 else
+{
 	results := ""
+	nResults := 0
+}
 tmSearch := (A_TickCount - tmSearch ) / 1000
-GuiControl,, Results, Index time: %tmIndex% seconds`n%NumFiles% files total, %NumDirectories% directories total`nSearch time for "%QueryString%": %tmSearch% seconds`n%results%
+GuiControl,, Results, Index time: %tmIndex% seconds`n%NumFiles% files total, %NumDirectories% directories total`nSearch time for "%QueryString%": %tmSearch% seconds`n%nResults% Result(s)`n%results%
 
 ;It may happen that the search takes long enough to swallow this g-label notification while typing. To fix this we simply run it again if the query string was changed.
 Gui, Submit, NoHide
@@ -63,7 +66,7 @@ tmSave := A_TickCount - tmSave
 GuiControl,, Results, Save time: %tmSave% seconds`n%NumFiles% files total, %NumDirectories% directories total
 return
 
-Query(String, QueryPath, LimitResults)
+Query(String, QueryPath, LimitResults, ByRef nResults)
 {
 	global DriveIndex, DllPath
 	pResult := DllCall(DllPath "\Search", "PTR", DriveIndex,  "wstr", String, "wstr", QueryPath, "int", true, "int", true, "int", LimitResults, "int*", nResults, PTR)

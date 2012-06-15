@@ -167,18 +167,21 @@ BOOL CDriveIndex::Query(PUSN_JOURNAL_DATA pUsnJournalData)
 BOOL CDriveIndex::Init(WCHAR cDrive)
 {
 	// You should not call this function twice for one instance.
-	if (m_hVol != INVALID_HANDLE_VALUE) DebugBreak();
+	if (m_hVol != INVALID_HANDLE_VALUE)
+		DebugBreak();
 	m_cDrive = cDrive;
 	ClearLastResult();
 	BOOL fOk = FALSE;
 	__try {
 		// Open a handle to the volume
 		m_hVol = Open(m_cDrive, GENERIC_WRITE | GENERIC_READ);
-		if (INVALID_HANDLE_VALUE == m_hVol) __leave;
+		if (INVALID_HANDLE_VALUE == m_hVol)
+			__leave;
 		fOk = TRUE;
 	}
 	__finally {
-		if (!fOk) CleanUp();
+		if (!fOk)
+			CleanUp();
 	}
 	return(fOk);
 }
@@ -205,11 +208,12 @@ BOOL CDriveIndex::Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, D
 // Adds a directory to the database
 BOOL CDriveIndex::AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Filter)
 {
-	IndexedFile i;
+	IndexedDirectory i;
 	i.Index = Index;
 	if(!Filter)
 		Filter = MakeFilter(szName);
 	i.Filter = Filter;
+	i.nFiles = 0;
 	rgDirectories.insert(rgDirectories.end(), i);
 	return(TRUE);
 }
@@ -362,6 +366,17 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 		return nResults;
 	}
 
+	if(strQueryPath != NULL)
+	{
+		//Check if the path actually matches the drive of this index
+		WCHAR szDrive[_MAX_DRIVE];
+		_wsplitpath(strQueryPath->c_str(), szDrive, NULL, NULL, NULL);
+		for(unsigned int j = 0; j != _MAX_DRIVE; j++)
+			szDrive[j] = toupper(szDrive[j]);
+		if(wstring(szDrive).compare(wstring(1,toupper(m_cDrive))) == 0)
+			return 0;
+	}
+
 	//Create lower query string for case-insensitive search
 	wstring strQueryLower(*strQuery);
 	for(unsigned int j = 0; j != strQueryLower.length(); j++)
@@ -373,6 +388,11 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 	for(unsigned int j = 0; j != strQueryPathLower.length(); j++)
 		strQueryPathLower[j] = tolower((*strQueryPath)[j]);
 	wstring* pstrQueryPathLower = strQueryPath != NULL && strQueryPathLower.length() > 0 ? &strQueryPathLower : NULL;
+
+	//If the query path is different from the last query so that the results are not valid anymore, the last query needs to be dropped
+	if(!(strQueryPath != NULL && (LastResult.maxResults == -1 || LastResult.iOffset == 0) && (LastResult.SearchPath.length() == 0 || strQueryPathLower.find(LastResult.SearchPath) == 0)))
+		LastResult = SearchResult();
+
 	//Calculate Filter value and length of the current query which are compared with the cached ones to skip many of them
 	DWORDLONG QueryFilter = MakeFilter(&strQueryLower);
 	DWORDLONG QueryLength = (QueryFilter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
@@ -431,8 +451,23 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 		if(LastResult.maxResults != -1 && LastResult.SearchEndedWhere != NO_WHERE && (maxResults == -1 || nResults < maxResults))
 			bSkipSearch = false;
 	}
-
-	if(SearchWhere == IN_FILES && !bSkipSearch)
+	DWORDLONG FRNPath;
+	long long nFilesInDir = -1;
+	if(strQueryPath != NULL && strQueryPath->length())
+	{
+		FRNPath = PathToFRN(strQueryPath);
+		wstring strPath2;
+		GetDir(FRNPath, &strPath2);
+		int iOffset = (int) FindDirOffsetByIndex(FRNPath);
+		if(iOffset != -1)
+			nFilesInDir = rgDirectories[iOffset].nFiles;
+	}
+	if(SearchWhere == IN_FILES && iOffset == 0 && nFilesInDir != -1 && nFilesInDir < 10000 && !bSkipSearch)
+	{
+		FindRecursively(*strQuery, szQueryLower, QueryFilter, QueryLength, strQueryPath, *rgsrfResults, bEnhancedSearch, maxResults, nResults);
+		SearchWhere = NO_WHERE;
+	}
+	else if(SearchWhere == IN_FILES && !bSkipSearch)
 	{
 		//Find in file index
 		FindInJournal(*strQuery, szQueryLower, QueryFilter, QueryLength, (strQueryPath != NULL ? &strQueryPathLower : NULL), rgFiles, *rgsrfResults, iOffset, bEnhancedSearch, maxResults, nResults);
@@ -466,6 +501,9 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 	
 	// Store this query
 	LastResult.Query = wstring(strQueryLower);
+	
+	// Store search path
+	LastResult.SearchPath = strQueryPathLower;
 
 	//Clear old results, they will be replaced with the current ones
 	LastResult.Results = vector<SearchResultFile>();
@@ -486,10 +524,92 @@ int CDriveIndex::Find(wstring *strQuery, wstring *strQueryPath, vector<SearchRes
 	return nResults;
 }
 
-void CDriveIndex::FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<IndexedFile> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults)
+void CDriveIndex::FindRecursively(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring* strQueryPath, vector<SearchResultFile> &rgsrfResults, BOOL bEnhancedSearch, int maxResults, int &nResults)
 {
-	for(IndexedFile *i = &rgJournalIndex[0]; i <= &rgJournalIndex.back(); i++)
+	WIN32_FIND_DATA ffd;
+	size_t length_of_arg;
+	HANDLE hFind = INVALID_HANDLE_VALUE;
+
+	// Check that the input path plus 3 is not longer than MAX_PATH.
+	// Three characters are for the "\*" plus NULL appended below.
+	length_of_arg = strQueryPath->length();
+	if (length_of_arg > (MAX_PATH - 3))
+		return;
+
+	// Prepare string for use with FindFile functions.  First, copy the
+	// string to a buffer, then append '\*' to the directory name.
+	wstring strPath = wstring(*strQueryPath);
+	if((*strQueryPath)[strQueryPath->length() - 1] != L'\\')
+		strPath += wstring(TEXT("\\*"));
+	else
+		strPath += wstring(TEXT("*"));
+
+	const WCHAR* szDir = strPath.c_str();
+
+	// Find the first file in the directory.
+	hFind = FindFirstFile(szDir, &ffd);
+
+	if (hFind == INVALID_HANDLE_VALUE)
+		return;
+	unsigned int nFiles = 0;
+	// List all the files in the directory with some info about them.
+	do
 	{
+		if(ffd.dwFileAttributes & FILE_ATTRIBUTE_VIRTUAL || ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			continue;
+		float MatchQuality;
+		wstring strFilename(ffd.cFileName);
+		if(strFilename.compare(TEXT(".")) == 0 || strFilename.compare(TEXT("..")) == 0)
+			continue;
+		nFiles++;
+		if(bEnhancedSearch)
+			MatchQuality = FuzzySearch(strFilename, strQuery);
+		else
+		{
+			wstring szLower(strFilename);
+			for(unsigned int j = 0; j != szLower.length(); j++)
+				szLower[j] = tolower(szLower[j]);
+			MatchQuality = szLower.find(strQuery) != -1;
+		}
+
+		if(MatchQuality > 0.6f)
+		{
+			nResults++;
+			if(maxResults != -1 && nResults > maxResults)
+			{
+				nResults = -1;
+				break;
+			}
+			SearchResultFile srf;
+			srf.Filename = strFilename;
+			srf.Path = *strQueryPath + TEXT("\\");
+			srf.Filter = MAXULONG64;
+			srf.MatchQuality = MatchQuality;
+			rgsrfResults.insert(rgsrfResults.end(), srf);
+		}
+
+		if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			wstring strSubPath = wstring(*strQueryPath);
+			if((*strQueryPath)[strQueryPath->length() - 1] != L'\\')
+				strSubPath += L'\\';
+			strSubPath += ffd.cFileName;
+			FindRecursively(strQuery, szQueryLower, QueryFilter, QueryLength, &strSubPath, rgsrfResults, bEnhancedSearch, maxResults, nResults);
+			if(nResults == -1)
+				break;
+		}
+	}
+	while (FindNextFile(hFind, &ffd) != 0);
+	FindClose(hFind);
+}
+
+//T needs to be IndexedFile or IndexedDirectory
+template <class T>
+void CDriveIndex::FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<T> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults)
+{
+	for(unsigned int j = 0; j != rgJournalIndex.size(); j++)
+	{
+		IndexedFile* i = (IndexedFile*)&rgJournalIndex[j];
 		DWORDLONG Length = (i->Filter & 0xE000000000000000ui64) >> 61ui64; //Bits 61-63 for storing lengths up to 8
 		DWORDLONG Filter = i->Filter & 0x1FFFFFFFFFFFFFFFui64; //All but the last 3 bits
 		if((Filter & QueryFilter) == QueryFilter && QueryLength <= Length)
@@ -603,13 +723,6 @@ BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
 	*sz = TEXT("");
 	int n = 0;
 	do {
-		INT64 Offset;
-		if(n == 0)
-			Offset = FindOffsetByIndex(Index);
-		else
-			Offset = FindDirOffsetByIndex(Index);
-		if(Offset == -1)
-			return FALSE;
 		USNEntry file = FRNToName(Index);
 		*sz = file.Name + ((n != 0) ? TEXT("\\") : TEXT("")) + *sz;
 		Index = file.ParentIndex;
@@ -625,9 +738,6 @@ BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz)
 {
 	*sz = TEXT("");
 	do {
-		INT64 Offset = FindDirOffsetByIndex(Index);
-		if(Offset == -1)
-			return FALSE;
 		USNEntry file = FRNToName(Index);
 		*sz = file.Name + ((sz->length() != 0) ? TEXT("\\") : TEXT("")) + *sz;
 		Index = file.ParentIndex;
@@ -652,27 +762,40 @@ INT64 CDriveIndex::FindOffsetByIndex(DWORDLONG Index) {
 //Finds the position of a directory in the database by the FileReferenceNumber
 INT64 CDriveIndex::FindDirOffsetByIndex(DWORDLONG Index)
 {
-	vector<IndexedFile>::difference_type pos;
-	IndexedFile i;
+	vector<IndexedDirectory>::difference_type pos;
+	IndexedDirectory i;
 	i.Index = Index;
 	pos = distance(rgDirectories.begin(), lower_bound(rgDirectories.begin(), rgDirectories.end(), i));
 	return (INT64) (pos == rgDirectories.size() ? -1 : pos); // this is valid because the number of files doesn't exceed the range of INT64
 }
 
-
+DWORDLONG PathToFRN(wstring* strPath)
+{
+	HANDLE hDir = CreateFile(strPath->c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	if(hDir == INVALID_HANDLE_VALUE)
+		return 0;
+	BY_HANDLE_FILE_INFORMATION fi;
+	GetFileInformationByHandle(hDir, &fi);
+	CloseHandle(hDir);
+	return (((DWORDLONG) fi.nFileIndexHigh) << 32) | fi.nFileIndexLow;
+}
 
 // Enumerate the MFT for all entries. Store the file reference numbers of
 // any directories in the database.
 void CDriveIndex::PopulateIndex()
 {
 	Empty();
+	
+	vector<DWORDLONG> FileParents;
+	vector<DWORDLONG> DirectoryParents;
+
 	USN_JOURNAL_DATA ujd;
 	Query(&ujd);
 
 	// Get the FRN of the root directory
 	// This had BETTER work, or we can't do anything
 
-	TCHAR szRoot[_MAX_PATH];
+	WCHAR szRoot[_MAX_PATH];
 	wsprintf(szRoot, TEXT("%c:\\"), m_cDrive);
 	HANDLE hDir = CreateFile(szRoot, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -680,10 +803,10 @@ void CDriveIndex::PopulateIndex()
 	BY_HANDLE_FILE_INFORMATION fi;
 	GetFileInformationByHandle(hDir, &fi);
 	CloseHandle(hDir);
-	DWORDLONG IndexRoot = (((DWORDLONG) fi.nFileIndexHigh) << 32) 
-		| fi.nFileIndexLow;
+	DWORDLONG IndexRoot = (((DWORDLONG) fi.nFileIndexHigh) << 32) | fi.nFileIndexLow;
 	wsprintf(szRoot, TEXT("%c:"), m_cDrive);
 	AddDir(IndexRoot, &wstring(szRoot), 0);
+	DirectoryParents.insert(DirectoryParents.end(), 0);
 	m_dwDriveFRN = IndexRoot;
 
 	MFT_ENUM_DATA med;
@@ -696,7 +819,7 @@ void CDriveIndex::PopulateIndex()
 	DWORDLONG fnLast = 0;
 	DWORD cb;
 	unsigned int num = 0;
-	unsigned int numDirs = 0;
+	unsigned int numDirs = 1;
 	while (DeviceIoControl(m_hVol, FSCTL_ENUM_USN_DATA, &med, sizeof(med), pData, sizeof(pData), &cb, NULL) != FALSE) {
 
 		PUSN_RECORD pRecord = (PUSN_RECORD) &pData[sizeof(USN)];
@@ -709,31 +832,107 @@ void CDriveIndex::PopulateIndex()
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
-
+	
+	FileParents.reserve(num);
+	DirectoryParents.reserve(numDirs);
 	rgFiles.reserve(num);
 	rgDirectories.reserve(numDirs);
+	hash_map<DWORDLONG, HashMapEntry> hmFiles;
+	hash_map<DWORDLONG, HashMapEntry> hmDirectories;
+	hash_map<DWORDLONG, HashMapEntry>::iterator it;
 	med.StartFileReferenceNumber = 0;
-	while (DeviceIoControl(m_hVol, FSCTL_ENUM_USN_DATA, &med, sizeof(med),
-		pData, sizeof(pData), &cb, NULL) != FALSE) {
-
-			PUSN_RECORD pRecord = (PUSN_RECORD) &pData[sizeof(USN)];
-			while ((PBYTE) pRecord < (pData + cb)) {
-				wstring sz((LPCWSTR) ((PBYTE) pRecord + pRecord->FileNameOffset), pRecord->FileNameLength / sizeof(WCHAR));
-				if ((pRecord->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-					AddDir(pRecord->FileReferenceNumber, &sz, pRecord->ParentFileReferenceNumber);
-				else
-					Add(pRecord->FileReferenceNumber, &sz, pRecord->ParentFileReferenceNumber);
-				pRecord = (PUSN_RECORD) ((PBYTE) pRecord + pRecord->RecordLength);
+	while (DeviceIoControl(m_hVol, FSCTL_ENUM_USN_DATA, &med, sizeof(med), pData, sizeof(pData), &cb, NULL) != FALSE)
+	{
+		PUSN_RECORD pRecord = (PUSN_RECORD) &pData[sizeof(USN)];
+		while ((PBYTE) pRecord < (pData + cb))
+		{
+			wstring sz((LPCWSTR) ((PBYTE) pRecord + pRecord->FileNameOffset), pRecord->FileNameLength / sizeof(WCHAR));
+			if ((pRecord->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			{
+				AddDir(pRecord->FileReferenceNumber, &sz, pRecord->ParentFileReferenceNumber);
+				//DirectoryParents.insert(DirectoryParents.end(), pRecord->ParentFileReferenceNumber);
+				HashMapEntry hme;
+				hme.iOffset = rgDirectories.size() - 1;
+				hme.ParentFRN = pRecord->ParentFileReferenceNumber;
+				hmDirectories[pRecord->FileReferenceNumber] = hme;
 			}
-			med.StartFileReferenceNumber = * (DWORDLONG *) pData;
+			else
+			{
+				Add(pRecord->FileReferenceNumber, &sz, pRecord->ParentFileReferenceNumber);
+				HashMapEntry hme;
+				hme.iOffset = rgFiles.size() - 1;
+				hme.ParentFRN = pRecord->ParentFileReferenceNumber;
+				//FileParents.insert(FileParents.end(), pRecord->ParentFileReferenceNumber);
+				hmFiles[pRecord->FileReferenceNumber] = hme;
+			}
+			pRecord = (PUSN_RECORD) ((PBYTE) pRecord + pRecord->RecordLength);
+		}
+		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
+
+	//Calculate files per directory. This takes most of the indexing time, but this information can be useful to reduce the time needed
+	//for searching in directories with few files (less than 10k).
+	for ( it=hmFiles.begin() ; it != hmFiles.end(); it++ )
+	{
+		HashMapEntry* hme = &hmDirectories[it->second.ParentFRN];
+		do
+		{
+			rgDirectories[hme->iOffset].nFiles++;
+			HashMapEntry* hme2 = &hmDirectories[it->second.ParentFRN];
+
+			if(hme != hme2)
+				hme = hme2;
+			else // This must not happen, otherwise a directory is its own parent!
+				break;
+		} while(hme->ParentFRN != 0);
+	}
+	//for(unsigned int i = 0; i != FileParents.size(); i++)
+	//{
+	//	DWORDLONG dwIndex = FileParents[i];
+	//	while(dwIndex != 0)
+	//	{
+	//		int iOffset = -1;
+	//		for(unsigned int j = 0; j != rgDirectories.size(); j++)
+	//			if(rgDirectories[j].Index == dwIndex)
+	//			{
+	//				iOffset = j;
+	//				break;
+	//			}
+	//		if(iOffset == -1)
+	//			break;
+	//		rgDirectories[iOffset].nFiles++;
+	//		DWORDLONG dwIndex2 = DirectoryParents[iOffset];
+
+	//		if(dwIndex != dwIndex2)
+	//			dwIndex = dwIndex2;
+	//		else // This must not happen, otherwise a directory is its own parent!
+	//			break;
+	//	}
+	//	//wstring strPath;
+	//	//GetDir(dwIndex, &strPath);
+
+	//	//do {
+	//	//	//USNEntry file = FRNToName(dwIndex);
+	//	//	int iOffset = -1;
+	//	//	for(int j = 0; j != rgDirectories.size(); j++)
+	//	//		if(rgDirectories[j].Index == dwIndex)
+	//	//		{
+	//	//				iOffset = j;
+	//	//				break;
+	//	//		}
+	//	//	if(iOffset == -1)
+	//	//		break;
+	//	//	//USNEntry parent = FRNToName(file.ParentIndex);
+	//	//	//USNEntry parent2 = FRNToName(rgDirectories[iOffset].Index);
+	//	//	rgDirectories[iOffset].nFiles++;
+	//	//	dwIndex = file.ParentIndex;
+	//	//} while (dwIndex != 0);
+	//}
 	rgFiles.shrink_to_fit();
 	rgDirectories.shrink_to_fit();
 	sort(rgFiles.begin(), rgFiles.end());
 	sort(rgDirectories.begin(), rgDirectories.end());
 }
-
-
 
 // Resolve FRN to filename by enumerating USN journal with StartFileReferenceNumber=FRN
 USNEntry CDriveIndex::FRNToName(DWORDLONG FRN)
@@ -779,7 +978,7 @@ BOOL CDriveIndex::SaveToDisk(wstring &strPath)
 		//Drive FileReferenceNumber
 		file.write((char*) &m_dwDriveFRN, sizeof(m_dwDriveFRN));
 
-		vector<IndexedFile>::size_type size = rgFiles.size();
+		unsigned int size = rgFiles.size();
 		//Number of files
 		file.write((char*) &size, sizeof(rgFiles.size()));
 		//indexed files
@@ -789,7 +988,7 @@ BOOL CDriveIndex::SaveToDisk(wstring &strPath)
 		//Number of directories
 		file.write((char*) &size, sizeof(rgDirectories.size()));
 		//indexed directories
-		file.write((char*) &(rgDirectories[0]), sizeof(IndexedFile) * rgDirectories.size());
+		file.write((char*) &(rgDirectories[0]), sizeof(IndexedDirectory) * rgDirectories.size());
 		file.close();
 		return true;
 	}
@@ -839,8 +1038,8 @@ CDriveIndex::CDriveIndex(wstring &strPath)
 			//indexed directories
 			for(unsigned int j = 0; j != numDirs; j++)
 			{
-				IndexedFile i;
-				file.read((char*) &i, sizeof(IndexedFile));
+				IndexedDirectory i;
+				file.read((char*) &i, sizeof(IndexedDirectory));
 				rgDirectories.insert(rgDirectories.end(), i);
 			}
 		}

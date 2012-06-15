@@ -12,11 +12,17 @@ Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richte
 #include <WinIoCtl.h>
 #include <stdio.h>
 #include <sstream>
+#include <hash_map>
 using namespace std;
 
 #define NO_WHERE 0
 #define IN_FILES 1
 #define IN_DIRECTORIES 2
+struct HashMapEntry
+{
+	DWORDLONG ParentFRN;
+	unsigned int iOffset;
+};
 struct IndexedFile
 {
 	DWORDLONG Index;
@@ -25,6 +31,28 @@ struct IndexedFile
 	bool operator<(const IndexedFile& i)
 	{
 		return Index < i.Index;
+	}
+	IndexedFile()
+	{
+		Index = 0;
+		Filter = 0;
+	}
+};
+struct IndexedDirectory
+{
+	DWORDLONG Index;
+	//DWORDLONG ParentIndex;
+	DWORDLONG Filter;
+	unsigned int nFiles;
+	bool operator<(const IndexedDirectory& i)
+	{
+		return Index < i.Index;
+	}
+	IndexedDirectory()
+	{
+		Index = 0;
+		Filter = 0;
+		nFiles = 0;
 	}
 };
 struct USNEntry
@@ -36,12 +64,22 @@ struct USNEntry
 		Name = aName;
 		ParentIndex = aParentIndex;
 	}
+	USNEntry()
+	{
+		ParentIndex = 0;
+		Name = wstring();
+	}
 };
 
 struct DriveInfo
 {
 	DWORDLONG NumFiles;
 	DWORDLONG NumDirectories;
+	DriveInfo()
+	{
+		NumFiles = 0;
+		NumDirectories = 0;
+	}
 };
 
 struct SearchResultFile
@@ -52,6 +90,10 @@ struct SearchResultFile
 	float MatchQuality;
 	SearchResultFile()
 	{
+		Filename = wstring();
+		Path = wstring();
+		Filter = 0;
+		MatchQuality = 0.0f;
 	}
 	SearchResultFile(const SearchResultFile &srf)
 	{
@@ -75,10 +117,20 @@ struct SearchResultFile
 struct SearchResult
 {
 	wstring Query;
+	wstring SearchPath;
 	vector<SearchResultFile> Results;
-	int iOffset; //-1 when finished
+	int iOffset; //0 when finished
 	unsigned int SearchEndedWhere;
 	int maxResults;
+	SearchResult()
+	{
+		Query = wstring();
+		SearchPath = wstring();
+		Results = vector<SearchResultFile>();
+		iOffset = 0;
+		SearchEndedWhere = NO_WHERE;
+		maxResults = -1;
+	}
 };
 class CDriveIndex {
 public:
@@ -87,8 +139,6 @@ public:
 	~CDriveIndex();
 	BOOL Init(WCHAR cDrive);
 	int Find(wstring *strQuery, wstring *strPath, vector<SearchResultFile> *rgsrfResults, BOOL bSort = true, BOOL bEnhancedSearch = true, int maxResults = -1);
-	void FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<IndexedFile> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
-	void FindInPreviousResults(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
 	void PopulateIndex();
 	BOOL SaveToDisk(wstring &strPath);
 	DriveInfo GetInfo();
@@ -98,6 +148,11 @@ protected:
 	HANDLE Open(WCHAR cDriveLetter, DWORD dwAccess);
 	BOOL Create(DWORDLONG MaximumSize, DWORDLONG AllocationDelta);
 	BOOL Query(PUSN_JOURNAL_DATA pUsnJournalData);
+	void FindRecursively(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, BOOL bEnhancedSearch, int maxResults, int &nResults);
+	template <class T>
+	void FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<T> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
+	void FindInPreviousResults(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
+	
 	INT64 FindOffsetByIndex(DWORDLONG Index);
 	INT64 FindDirOffsetByIndex(DWORDLONG Index);
 	DWORDLONG MakeFilter(wstring *szName);
@@ -107,6 +162,7 @@ protected:
 	BOOL AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
 	BOOL Get(DWORDLONG Index, wstring *sz);
 	BOOL GetDir(DWORDLONG Index, wstring *sz);
+	unsigned int GetParentDirectory(DWORDLONG Index);
 	void ClearLastResult();
 	// Members used to enumerate journal records
 	HANDLE					m_hVol;			// handle to volume
@@ -115,11 +171,11 @@ protected:
 
 	//Database containers
 	vector<IndexedFile> rgFiles;
-	vector<IndexedFile> rgDirectories;
-
+	vector<IndexedDirectory> rgDirectories;
 	SearchResult LastResult;
 };
 float FuzzySearch(wstring &longer, wstring &shorter);
+DWORDLONG PathToFRN(wstring* strPath);
 
 //Exported functions
 CDriveIndex* _stdcall CreateIndex(WCHAR Drive);
