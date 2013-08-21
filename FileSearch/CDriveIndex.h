@@ -12,7 +12,9 @@ Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richte
 #include <WinIoCtl.h>
 #include <stdio.h>
 #include <sstream>
-#include <hash_map>
+#include <unordered_map>
+#include "tinyxml2.h"
+
 using namespace std;
 
 #define NO_WHERE 0
@@ -134,35 +136,40 @@ struct SearchResult
 };
 class CDriveIndex {
 public:
+	enum ExportFormat {ExportFormatAdcXml, ExportFormatAdcXml_LZ4};
+
+public:
 	CDriveIndex();
 	CDriveIndex(wstring &strPath);
 	~CDriveIndex();
 	BOOL Init(WCHAR cDrive);
 	int Find(wstring *strQuery, wstring *strPath, vector<SearchResultFile> *rgsrfResults, BOOL bSort = true, BOOL bEnhancedSearch = true, int maxResults = -1);
 	void PopulateIndex();
-	BOOL SaveToDisk(wstring &strPath);
-	DriveInfo GetInfo();
+	BOOL SaveToDisk(wstring &strPath) const;
+	BOOL ExportToFileListing(wstring &strPath, int format) const;
+	DriveInfo GetInfo() const;
 
 protected:
 	BOOL Empty();
 	HANDLE Open(WCHAR cDriveLetter, DWORD dwAccess);
 	BOOL Create(DWORDLONG MaximumSize, DWORDLONG AllocationDelta);
-	BOOL Query(PUSN_JOURNAL_DATA pUsnJournalData);
+	BOOL Query(PUSN_JOURNAL_DATA pUsnJournalData) const;
 	void FindRecursively(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, BOOL bEnhancedSearch, int maxResults, int &nResults);
 	template <class T>
 	void FindInJournal(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<T> &rgJournalIndex, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
 	void FindInPreviousResults(wstring &strQuery, const WCHAR* &szQueryLower, DWORDLONG QueryFilter, DWORDLONG QueryLength, wstring * strQueryPath, vector<SearchResultFile> &rgsrfResults, unsigned int  iOffset, BOOL bEnhancedSearch, int maxResults, int &nResults);
+	void attach(vector<tinyxml2::XMLHandle> &dirHandles, unordered_map<DWORDLONG, vector<tinyxml2::XMLHandle>::size_type> &umDirFrnToHandle, int NodeType, DWORDLONG Index) const;
 	
 	INT64 FindOffsetByIndex(DWORDLONG Index);
 	INT64 FindDirOffsetByIndex(DWORDLONG Index);
 	DWORDLONG MakeFilter(wstring *szName);
-	USNEntry FRNToName(DWORDLONG FRN);
+	USNEntry FRNToName(DWORDLONG FRN) const;
 	void CleanUp();
 	BOOL Add(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
 	BOOL AddDir(DWORDLONG Index, wstring *szName, DWORDLONG ParentIndex, DWORDLONG Address = 0);
-	BOOL Get(DWORDLONG Index, wstring *sz);
-	BOOL GetDir(DWORDLONG Index, wstring *sz);
-	unsigned int GetParentDirectory(DWORDLONG Index);
+	BOOL Get(DWORDLONG Index, wstring *sz) const;
+	BOOL GetDir(DWORDLONG Index, wstring *sz) const;
+	//unsigned int GetParentDirectory(DWORDLONG Index);
 	void ClearLastResult();
 	// Members used to enumerate journal records
 	HANDLE					m_hVol;			// handle to volume
@@ -185,3 +192,5 @@ void _stdcall FreeResultsBuffer(WCHAR *szResults);
 BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath);
 CDriveIndex* _stdcall LoadIndexFromDisk(WCHAR *szPath);
 void _stdcall GetDriveInfo(CDriveIndex *di, DriveInfo *driveInfo);
+BOOL _stdcall SaveIndexToDisk(CDriveIndex *di, WCHAR *szPath);
+BOOL _stdcall ExportIndex(CDriveIndex *di, WCHAR *szPath, int format);
