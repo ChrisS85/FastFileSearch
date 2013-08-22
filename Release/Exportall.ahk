@@ -101,13 +101,20 @@ Class NtfsFastProc {
 		NTFSDrives := this.GetIndexingDrives()
 		for index, Drive in NTFSDrives
 		{
-			ExportPath := A_ScriptDir "\" Drive "_export.xmlz4"
+			ExportPath := A_ScriptDir "\" Drive "_export.xml"
 			DriveIndex := DllCall(this.DllPath "\CreateIndex", "ushort", NumGet(Drive, "ushort"), "PTR")
 			if (DriveIndex)
 			{
-				hSrResult := DllCall(this.QueryProc, "PTR", DriveIndex, "wstr", ExportPath, "int", ExportFormatAdcXml_LZ4 := 1, PTR)
+				hSrResult := DllCall(this.QueryProc, "PTR", DriveIndex, "wstr", ExportPath, "int", ExportFormatAdcXml := 0, PTR)
 				SoundPlay, *64
 			}
+;			ExportPath := A_ScriptDir "\" Drive "_export.xmlz4"
+;			DriveIndex := DllCall(this.DllPath "\CreateIndex", "ushort", NumGet(Drive, "ushort"), "PTR")
+;			if (DriveIndex)
+;			{
+;				hSrResult := DllCall(this.QueryProc, "PTR", DriveIndex, "wstr", ExportPath, "int", ExportFormatAdcXml_LZ4 := 1, PTR)
+;				SoundPlay, *64
+;			}
 		}
 	}
 

@@ -187,11 +187,11 @@ BOOL CDriveIndex::ExportToFileListing(wstring &strPath, int format) const
 	if (file.is_open())
 	{
 		if (format == ExportFormat::ExportFormatAdcXml) {
-			file.write(printer.CStr(), printer.CStrSize());
+			file.write(printer.CStr(), printer.CStrSize() - 1);
 			return file.good();
 		}
 		else if (format == ExportFormat::ExportFormatAdcXml_LZ4) {
-			int const uncompressed_size = printer.CStrSize();
+			int const uncompressed_size = printer.CStrSize() - 1;
 			int max_compressed_size = LZ4_compressBound( uncompressed_size );
 			std::unique_ptr<char[]> compressed( new char[max_compressed_size] );
 			int const compressed_size = LZ4_compress( printer.CStr(), compressed.get(), uncompressed_size );
