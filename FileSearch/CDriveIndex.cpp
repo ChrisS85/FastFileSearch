@@ -46,6 +46,12 @@ CDriveIndex* _stdcall CreateIndex(WCHAR cDrive)
 	CDriveIndex *di = new CDriveIndex();
 	di->Init(cDrive);
 	di->PopulateIndex();
+	DriveInfo info(di->GetInfo());
+	if (info.NumFiles <= 2)
+	{
+		delete di;
+		di = 0;
+	}
 	return di;
 }
 
