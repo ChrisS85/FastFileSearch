@@ -20,6 +20,13 @@ using namespace gel;
 
 using namespace tinyxml2;
 
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+typedef MFT_ENUM_DATA_V0 LEGACY_MFT_ENUM_DATA;
+#else
+typedef MFT_ENUM_DATA LEGACY_MFT_ENUM_DATA;
+#endif
+
+
 namespace {
 template <typename T>
 T swap_endian(T u)
@@ -1006,7 +1013,7 @@ void CDriveIndex::PopulateIndex()
 	DirectoryParents.insert(DirectoryParents.end(), 0);
 	m_dwDriveFRN = IndexRoot;
 
-	MFT_ENUM_DATA med;
+	LEGACY_MFT_ENUM_DATA med;
 	med.StartFileReferenceNumber = 0;
 	med.LowUsn = 0;
 	med.HighUsn = ujd.NextUsn;
@@ -1029,6 +1036,7 @@ void CDriveIndex::PopulateIndex()
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
+	DWORD err1 = GetLastError();
 	
 	FileParents.reserve(num);
 	DirectoryParents.reserve(numDirs);
@@ -1066,6 +1074,7 @@ void CDriveIndex::PopulateIndex()
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
+	err1 = GetLastError();
 
 	//Calculate files per directory. This takes most of the indexing time, but this information can be useful to reduce the time needed
 	//for searching in directories with few files (less than 10k).
@@ -1139,7 +1148,7 @@ USNEntry CDriveIndex::FRNToName(DWORDLONG FRN) const
 	USN_JOURNAL_DATA ujd;
 	Query(&ujd);
 
-	MFT_ENUM_DATA med;
+	LEGACY_MFT_ENUM_DATA med;
 	med.StartFileReferenceNumber = FRN;
 	med.LowUsn = 0;
 	med.HighUsn = ujd.NextUsn;

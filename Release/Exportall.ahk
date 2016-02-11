@@ -103,6 +103,7 @@ Class NtfsFastProc {
 		{
 			ExportPath := A_ScriptDir "\" Drive "_export.xml"
 			DriveIndex := DllCall(this.DllPath "\CreateIndex", "ushort", NumGet(Drive, "ushort"), "PTR")
+			; May be locked with BitLocker if DriveIndex is null
 			if (DriveIndex)
 			{
 				hSrResult := DllCall(this.QueryProc, "PTR", DriveIndex, "wstr", ExportPath, "int", ExportFormatAdcXml := 0, PTR)

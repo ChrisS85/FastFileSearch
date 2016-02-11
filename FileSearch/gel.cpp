@@ -17,6 +17,7 @@ namespace std
 namespace gel
 {namespace stdx
 {
+#if 0
 	//instantiate the global locale
 	std::locale utf8_locale(std::locale(), new std::codecvt_utf8<wchar_t>()); // VS2010 and further
 
@@ -25,5 +26,13 @@ namespace gel
 		std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
 		return myconv.to_bytes(str);
 	}
+#else
+
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> conversion;
+	std::string wstring_to_utf8(const std::wstring& str) {
+		return conversion.to_bytes(str);
+	}
+
+#endif
 
 }}
