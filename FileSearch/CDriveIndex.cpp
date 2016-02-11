@@ -7,9 +7,44 @@ Credits for original code this is based on: Jeffrey Cooperstein & Jeffrey Richte
 #include "stdafx.h"
 #include "CDriveIndex.h"
 #include <algorithm>
+#include <memory>
+#include <hash_map>
 #include <iostream>
 #include <fstream>
+#include <ctime>
 
+#include "lz4.h"
+
+#include "stxutif.h"
+using namespace gel;
+
+using namespace tinyxml2;
+
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+typedef MFT_ENUM_DATA_V0 LEGACY_MFT_ENUM_DATA;
+#else
+typedef MFT_ENUM_DATA LEGACY_MFT_ENUM_DATA;
+#endif
+
+
+namespace {
+template <typename T>
+T swap_endian(T u)
+{
+    union
+    {
+        T u;
+        unsigned char u8[sizeof(T)];
+    } source, dest;
+
+    source.u = u;
+
+    for (size_t k = 0; k < sizeof(T); k++)
+        dest.u8[k] = source.u8[sizeof(T) - k - 1];
+
+    return dest.u;
+}
+};
 
 
 // Exported function to create the index of a drive
@@ -18,6 +53,12 @@ CDriveIndex* _stdcall CreateIndex(WCHAR cDrive)
 	CDriveIndex *di = new CDriveIndex();
 	di->Init(cDrive);
 	di->PopulateIndex();
+	DriveInfo info(di->GetInfo());
+	if (info.NumFiles <= 2)
+	{
+		delete di;
+		di = 0;
+	}
 	return di;
 }
 
@@ -30,6 +71,162 @@ void _stdcall DeleteIndex(CDriveIndex *di)
 		delete di;
 }
 
+void CDriveIndex::attach(vector<XMLHandle> &dirHandles, unordered_map<DWORDLONG, vector<XMLHandle>::size_type> &umDirFrnToHandle, int NodeType, DWORDLONG Index) const
+{
+	if (umDirFrnToHandle.find(Index) != umDirFrnToHandle.end()) {  // already processed?
+		return;
+	}
+
+	USNEntry file = FRNToName(Index);
+	if (file.ParentIndex == 0) {  // No upper directory
+		return;
+	}
+	if(!(file.ParentIndex == 0 && file.Name.length() == 2 && file.Name[1] == wchar_t(L':'))) // to exclude drive itself
+	{
+		SearchResultFile srf;
+		srf.Filename = file.Name;
+		srf.Path.reserve(MAX_PATH);
+		// Obtain path into buffer, and split it
+		Get(Index, &srf.Path);
+		if(srf.Path.length() < 3) {
+			return;
+		}
+
+		WCHAR szDrive[_MAX_DRIVE];
+		WCHAR szPath[_MAX_PATH];
+		WCHAR szName[_MAX_FNAME];
+		WCHAR szExt[_MAX_EXT];
+		_wsplitpath(srf.Path.c_str(), szDrive, szPath, szName, szExt);
+
+		// Skip metadata files and other special directories
+		int compareCount = sizeof(L"$RECYCLE.BIN") / sizeof(WCHAR) - 1;
+		if (*szDrive == wchar_t(0) || srf.Path.compare(3, compareCount, L"$RECYCLE.BIN", compareCount) == 0) {
+			return;
+		}
+
+		unordered_map<DWORDLONG, vector<XMLHandle>::size_type>::const_iterator it(umDirFrnToHandle.find(file.ParentIndex));
+		if (it == umDirFrnToHandle.end()) {
+			attach(dirHandles, umDirFrnToHandle, IN_DIRECTORIES, file.ParentIndex);
+		}
+		it = umDirFrnToHandle.find(file.ParentIndex);
+		if (it == umDirFrnToHandle.end()) {
+			return;  // unexpected
+		}
+		XMLHandle parentHandle(dirHandles[it->second]);
+		
+		XMLNode * parent = parentHandle.ToNode();
+		if (!parent) {
+			return;
+		}
+		
+		XMLElement * element = parent->GetDocument()->NewElement( (NodeType == IN_DIRECTORIES) ? "Directory" : "File" );
+		element->SetAttribute("Name", stdx::wstring_to_utf8(file.Name).c_str());
+
+		if (NodeType == IN_DIRECTORIES) {
+			vector<XMLHandle>::iterator insertedIt(dirHandles.insert(dirHandles.end(), XMLHandle(element)));
+			umDirFrnToHandle[Index] = insertedIt - dirHandles.begin();
+		}
+		else {
+			HANDLE hFile = CreateFile( srf.Path.c_str(), 0,
+									FILE_SHARE_READ, 0, OPEN_EXISTING,
+									FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, 0 );
+			if (hFile != INVALID_HANDLE_VALUE) {
+				BY_HANDLE_FILE_INFORMATION FileInfo = {0};
+				GetFileInformationByHandle(hFile, &FileInfo);
+				if (!(FileInfo.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+					ULARGE_INTEGER filesize = {FileInfo.nFileSizeLow, FileInfo.nFileSizeHigh};
+					element->SetAttribute("Size", std::to_string(DWORDLONG(filesize.QuadPart)).c_str());;
+				}
+				CloseHandle(hFile);
+			}
+		}
+		
+		parent->InsertEndChild(element);
+	}
+}
+
+
+// Exports database to an exchange format.
+// format is ignored for now, pass 0 for the default format.
+// returns number of processed entries and 0 if an error occured.
+BOOL CDriveIndex::ExportToFileListing(wstring &strPath, int format) const
+{
+	if (format < ExportFormat::ExportFormatAdcXml || format > ExportFormat::ExportFormatAdcXml_LZ4) {
+		return FALSE;
+	}
+	vector<SearchResultFile> results;
+	XMLDocument doc;
+	XMLPrinter printer;
+	__time64_t tm;
+	CHAR tmbuf[200];
+
+	_time64(&tm);
+	strftime(tmbuf, sizeof(tmbuf) / sizeof(tmbuf[0]), "%Y-%m-%dT%H:%M:%SZ", _gmtime64(&tm));
+
+	stringstream emptyxml;
+	emptyxml <<
+		"<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+		"<FileListing Version=\"1\" CID=\"00FASTFILESEARCH00CDRIVEINDEXCLASSAPI00"
+		"\" Base=\"" << stdx::wstring_to_utf8(wstring(&m_cDrive,(&m_cDrive)+1)) << ":" <<
+		"\" Generator=\"FastFileSearch CDriveIndex C++ API"
+		"\" GeneratedDate=\"" << tmbuf << "\"\n"
+		" xmlns:adc=\"http://adc.sourceforge.net/ADC.html\"></FileListing>";
+
+	XMLError err = doc.Parse(emptyxml.str().c_str());
+	if (err != XML_SUCCESS) {
+		return false;
+	}
+	XMLHandle docHandle( &doc );
+
+	vector<XMLHandle> dirHandles;
+	dirHandles.reserve(rgDirectories.size());
+	unordered_map<DWORDLONG, vector<XMLHandle>::size_type> umDirFrnToHandle;
+
+	vector<XMLHandle>::iterator insertedIt(dirHandles.insert(dirHandles.end(), XMLHandle(docHandle.FirstChildElement())));
+	umDirFrnToHandle[m_dwDriveFRN] = insertedIt - dirHandles.begin();
+
+	for(unsigned int j = 0; j != rgDirectories.size(); j++) {
+		const IndexedDirectory* i = &rgDirectories[j];
+		attach(dirHandles, umDirFrnToHandle, IN_DIRECTORIES, i->Index);
+	}
+	for(unsigned int j = 0; j != rgFiles.size(); j++) {
+		const IndexedFile* i = &rgFiles[j];
+		attach(dirHandles, umDirFrnToHandle, IN_FILES, i->Index);
+	}
+	doc.Print( &printer );
+
+	std::ofstream file;  // closes at end of scope
+	file.open(strPath.c_str(), ios::out|ios::binary|ios::trunc);
+	if (file.is_open())
+	{
+		if (format == ExportFormat::ExportFormatAdcXml) {
+			file.write(printer.CStr(), printer.CStrSize() - 1);
+			return file.good();
+		}
+		else if (format == ExportFormat::ExportFormatAdcXml_LZ4) {
+			int const uncompressed_size = printer.CStrSize() - 1;
+			int max_compressed_size = LZ4_compressBound( uncompressed_size );
+			std::unique_ptr<char[]> compressed( new char[max_compressed_size] );
+			int const compressed_size = LZ4_compress( printer.CStr(), compressed.get(), uncompressed_size );
+			int const final_compressed_size = ( compressed_size >= uncompressed_size ) ? uncompressed_size : compressed_size;
+
+#if defined(BIG_ENDIAN)
+				int value;
+				value = swap_endian(uncompressed_size); file.write(reinterpret_cast<const char*>(&value), sizeof(int));
+				value = swap_endian(final_compressed_size); file.write(reinterpret_cast<const char*>(&value), sizeof(int));
+#else
+				file.write(reinterpret_cast<const char*>(&uncompressed_size), sizeof(int));
+				file.write(reinterpret_cast<const char*>(&final_compressed_size), sizeof(int));
+#endif
+				file.write(( compressed_size >= uncompressed_size ) ? printer.CStr() : compressed.get(), final_compressed_size);
+
+				return true;
+		}
+	}
+
+	
+	return false;
+}
 
 
 // Exported function to search in the index of a drive.
@@ -97,6 +294,13 @@ void _stdcall GetDriveInfo(CDriveIndex *di, DriveInfo *driveInfo)
 
 
 
+BOOL _stdcall ExportIndex(CDriveIndex *di, WCHAR *szPath, int format)
+{
+	if(dynamic_cast<CDriveIndex*>(di) && szPath)
+		return di->ExportToFileListing(wstring(szPath), format);
+	return false;
+}
+
 // Constructor
 CDriveIndex::CDriveIndex()
 {
@@ -150,7 +354,7 @@ BOOL CDriveIndex::Create(DWORDLONG MaximumSize, DWORDLONG AllocationDelta)
 }
 
 // Return statistics about the journal on the current volume
-BOOL CDriveIndex::Query(PUSN_JOURNAL_DATA pUsnJournalData)
+BOOL CDriveIndex::Query(PUSN_JOURNAL_DATA pUsnJournalData) const
 {
 	DWORD cb;
 	BOOL fOk = DeviceIoControl(m_hVol, FSCTL_QUERY_USN_JOURNAL, NULL, 0, 
@@ -718,7 +922,7 @@ BOOL CDriveIndex::Empty()
 
 
 // Constructs a path for a file
-BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
+BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz) const
 {
 	*sz = TEXT("");
 	int n = 0;
@@ -734,7 +938,7 @@ BOOL CDriveIndex::Get(DWORDLONG Index, wstring *sz)
 
 
 // Constructs a path for a directory
-BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz)
+BOOL CDriveIndex::GetDir(DWORDLONG Index, wstring *sz) const
 {
 	*sz = TEXT("");
 	do {
@@ -809,7 +1013,7 @@ void CDriveIndex::PopulateIndex()
 	DirectoryParents.insert(DirectoryParents.end(), 0);
 	m_dwDriveFRN = IndexRoot;
 
-	MFT_ENUM_DATA med;
+	LEGACY_MFT_ENUM_DATA med;
 	med.StartFileReferenceNumber = 0;
 	med.LowUsn = 0;
 	med.HighUsn = ujd.NextUsn;
@@ -832,6 +1036,7 @@ void CDriveIndex::PopulateIndex()
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
+	DWORD err1 = GetLastError();
 	
 	FileParents.reserve(num);
 	DirectoryParents.reserve(numDirs);
@@ -869,6 +1074,7 @@ void CDriveIndex::PopulateIndex()
 		}
 		med.StartFileReferenceNumber = * (DWORDLONG *) pData;
 	}
+	err1 = GetLastError();
 
 	//Calculate files per directory. This takes most of the indexing time, but this information can be useful to reduce the time needed
 	//for searching in directories with few files (less than 10k).
@@ -935,14 +1141,14 @@ void CDriveIndex::PopulateIndex()
 }
 
 // Resolve FRN to filename by enumerating USN journal with StartFileReferenceNumber=FRN
-USNEntry CDriveIndex::FRNToName(DWORDLONG FRN)
+USNEntry CDriveIndex::FRNToName(DWORDLONG FRN) const
 {
 	if(FRN == m_dwDriveFRN)
 		return USNEntry(wstring(1, m_cDrive) + wstring(TEXT(":")), 0);
 	USN_JOURNAL_DATA ujd;
 	Query(&ujd);
 
-	MFT_ENUM_DATA med;
+	LEGACY_MFT_ENUM_DATA med;
 	med.StartFileReferenceNumber = FRN;
 	med.LowUsn = 0;
 	med.HighUsn = ujd.NextUsn;
@@ -966,7 +1172,7 @@ USNEntry CDriveIndex::FRNToName(DWORDLONG FRN)
 
 
 // Saves the database to disk. The file can be used to create an instance of CDriveIndex.
-BOOL CDriveIndex::SaveToDisk(wstring &strPath)
+BOOL CDriveIndex::SaveToDisk(wstring &strPath) const
 {
 	ofstream::pos_type size;
 	ofstream file (strPath.c_str(), ios::out|ios::binary|ios::trunc);
@@ -1051,7 +1257,7 @@ CDriveIndex::CDriveIndex(wstring &strPath)
 
 
 // Returns the number of files and folders on this drive
-DriveInfo CDriveIndex::GetInfo()
+DriveInfo CDriveIndex::GetInfo() const
 {
 	DriveInfo di;
  	di.NumFiles = (DWORDLONG) rgFiles.size();

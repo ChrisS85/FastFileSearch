@@ -30,6 +30,15 @@
     <ClInclude Include="CDriveIndex.h">
       <Filter>Headerdateien</Filter>
     </ClInclude>
+    <ClInclude Include="stxutif.h">
+      <Filter>Headerdateien</Filter>
+    </ClInclude>
+    <ClInclude Include="tinyxml2.h">
+      <Filter>Headerdateien</Filter>
+    </ClInclude>
+    <ClInclude Include="lz4.h">
+      <Filter>Headerdateien</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -39,6 +48,15 @@
       <Filter>Quelldateien</Filter>
     </ClCompile>
     <ClCompile Include="CDriveIndex.cpp">
+      <Filter>Quelldateien</Filter>
+    </ClCompile>
+    <ClCompile Include="gel.cpp">
+      <Filter>Quelldateien</Filter>
+    </ClCompile>
+    <ClCompile Include="tinyxml2.cpp">
+      <Filter>Quelldateien</Filter>
+    </ClCompile>
+    <ClCompile Include="lz4.c">
       <Filter>Quelldateien</Filter>
     </ClCompile>
   </ItemGroup>

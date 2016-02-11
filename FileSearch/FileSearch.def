@@ -8,3 +8,4 @@ EXPORTS
    LoadIndexFromDisk @5
    SaveIndexToDisk @6
    GetDriveInfo @7
+   ExportIndex @8
